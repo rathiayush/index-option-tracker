@@ -6,7 +6,7 @@ atm   = input.int(23500, "ATM Strike")
 step  = input.int(50, "Strike Step")
 date  = input.string("23MAR", "Expiry (e.g. 23MAR)")
 niftySymbol = input.symbol("NSE:NIFTY", "NIFTY SPOT")
-indexName = input.string("NIFTY", "Index", options=["NIFTY","BANKNIFTY","SENSEX"])
+indexName = input.string("NIFTY", "Index", options=["NIFTY","BANKNIFTY","BSX"])
 
 // ── Label spacing multiplier — increase this if labels still overlap ──
 spacerMult = input.float(3.0, "Label Spacing Multiplier", minval=1.0, maxval=10.0, step=0.5)
