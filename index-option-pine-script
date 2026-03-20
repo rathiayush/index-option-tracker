@@ -1,0 +1,332 @@
+//@version=5
+indicator("Dynamic NIFTY Options Dashboard (5 Levels)", overlay=true)
+
+// ================= INPUT =================
+atm   = input.int(23500, "ATM Strike")
+step  = input.int(50, "Strike Step")
+date  = input.string("23MAR", "Expiry (e.g. 23MAR)")
+niftySymbol = input.symbol("NSE:NIFTY", "NIFTY SPOT")
+indexName = input.string("NIFTY", "Index", options=["NIFTY","BANKNIFTY","SENSEX"])
+
+// ── Label spacing multiplier — increase this if labels still overlap ──
+spacerMult = input.float(3.0, "Label Spacing Multiplier", minval=1.0, maxval=10.0, step=0.5)
+
+// ================= STRIKE CALC =================
+ce_itm2 = atm - (2 * step)
+ce_itm1 = atm - step
+ce_atm  = atm
+ce_otm1 = atm + step
+ce_otm2 = atm + (2 * step)
+
+pe_itm2 = atm + (2 * step)
+pe_itm1 = atm + step
+pe_atm  = atm
+pe_otm1 = atm - step
+pe_otm2 = atm - (2 * step)
+
+// ================= SYMBOL =================
+f_sym(strike, type) =>
+    str.tostring(indexName) + str.tostring(date) + type + str.tostring(strike)
+
+// ================= RSI COLOR =================
+f_rsi_color(rsi) =>
+    color c = color.green
+    if rsi >= 70
+        c := color.maroon
+    else if rsi >= 60
+        c := color.red
+    else if rsi >= 50
+        c := color.orange
+    else if rsi >= 40
+        c := color.lime
+    c
+
+// ================= SIGNAL =================
+f_signal(sym) =>
+    c = request.security(sym, timeframe.period, close)
+    ema9  = ta.ema(c, 9)
+    ema26 = ta.ema(c, 26)
+    ema50 = ta.ema(c, 50)
+    rsi   = ta.rsi(c, 14)
+    vwap  = request.security(sym, timeframe.period, ta.vwap(close))
+    trend = ema9 > ema26 ? "BULL" : "BEAR"
+    crossUp   = ta.crossover(ema9, ema26)
+    crossDown = ta.crossunder(ema9, ema26)
+    barsUp   = ta.barssince(crossUp)
+    barsDown = ta.barssince(crossDown)
+    signal = barsUp == 1 ? "BUY" : barsDown == 1 ? "SELL" : "WAIT"
+    vwap_pos  = c > vwap  ? "▲VWAP" : "▼VWAP"
+    ema50_pos = c > ema50 ? "▲E50"  : "▼E50"
+    [trend, signal, c, rsi, vwap_pos, ema50_pos, crossUp, crossDown, barsUp, barsDown]
+
+// ================= NIFTY SPOT =================
+n_close = request.security(niftySymbol, timeframe.period, close)
+n_ema9  = ta.ema(n_close, 9)
+n_ema26 = ta.ema(n_close, 26)
+n_ema50 = ta.ema(n_close, 50)
+n_rsi   = ta.rsi(n_close, 14)
+n_vwap  = ta.vwap(n_close)
+n_crossUp   = ta.crossover(n_ema9, n_ema26)
+n_crossDown = ta.crossunder(n_ema9, n_ema26)
+n_barsUp    = ta.barssince(n_crossUp)
+n_barsDown  = ta.barssince(n_crossDown)
+n_trend     = n_ema9 > n_ema26 ? "BULL" : "BEAR"
+n_signal    = n_barsUp == 1 ? "BUY" : n_barsDown == 1 ? "SELL" : "WAIT"
+n_vwap_pos  = n_close > n_vwap  ? "▲VWAP" : "▼VWAP"
+n_ema50_pos = n_close > n_ema50 ? "▲E50"  : "▼E50"
+
+// ================= FETCH ALL =================
+[ce_itm2_t, ce_itm2_s, ce_itm2_p, ce_itm2_r, ce_itm2_v, ce_itm2_e, ce_itm2_cu, ce_itm2_cd, ce_itm2_bu, ce_itm2_bd] = f_signal(f_sym(ce_itm2, "C"))
+[ce_itm1_t, ce_itm1_s, ce_itm1_p, ce_itm1_r, ce_itm1_v, ce_itm1_e, ce_itm1_cu, ce_itm1_cd, ce_itm1_bu, ce_itm1_bd] = f_signal(f_sym(ce_itm1, "C"))
+[ce_atm_t , ce_atm_s , ce_atm_p , ce_atm_r , ce_atm_v , ce_atm_e , ce_atm_cu , ce_atm_cd , ce_atm_bu , ce_atm_bd ] = f_signal(f_sym(ce_atm,  "C"))
+[ce_otm1_t, ce_otm1_s, ce_otm1_p, ce_otm1_r, ce_otm1_v, ce_otm1_e, ce_otm1_cu, ce_otm1_cd, ce_otm1_bu, ce_otm1_bd] = f_signal(f_sym(ce_otm1, "C"))
+[ce_otm2_t, ce_otm2_s, ce_otm2_p, ce_otm2_r, ce_otm2_v, ce_otm2_e, ce_otm2_cu, ce_otm2_cd, ce_otm2_bu, ce_otm2_bd] = f_signal(f_sym(ce_otm2, "C"))
+
+[pe_itm2_t, pe_itm2_s, pe_itm2_p, pe_itm2_r, pe_itm2_v, pe_itm2_e, pe_itm2_cu, pe_itm2_cd, pe_itm2_bu, pe_itm2_bd] = f_signal(f_sym(pe_itm2, "P"))
+[pe_itm1_t, pe_itm1_s, pe_itm1_p, pe_itm1_r, pe_itm1_v, pe_itm1_e, pe_itm1_cu, pe_itm1_cd, pe_itm1_bu, pe_itm1_bd] = f_signal(f_sym(pe_itm1, "P"))
+[pe_atm_t , pe_atm_s , pe_atm_p , pe_atm_r , pe_atm_v , pe_atm_e , pe_atm_cu , pe_atm_cd , pe_atm_bu , pe_atm_bd ] = f_signal(f_sym(pe_atm,  "P"))
+[pe_otm1_t, pe_otm1_s, pe_otm1_p, pe_otm1_r, pe_otm1_v, pe_otm1_e, pe_otm1_cu, pe_otm1_cd, pe_otm1_bu, pe_otm1_bd] = f_signal(f_sym(pe_otm1, "P"))
+[pe_otm2_t, pe_otm2_s, pe_otm2_p, pe_otm2_r, pe_otm2_v, pe_otm2_e, pe_otm2_cu, pe_otm2_cd, pe_otm2_bu, pe_otm2_bd] = f_signal(f_sym(pe_otm2, "P"))
+
+// ================= COLOR HELPERS =================
+c_bull   = color.new(color.lime,   0)
+c_bear   = color.new(color.red,    0)
+c_buy    = color.new(color.green,  0)
+c_sell   = color.new(color.red,    0)
+c_wait   = color.new(color.orange, 0)
+c_white  = color.new(color.white,  0)
+c_gray   = color.new(color.gray,   0)
+c_dark   = color.new(#1a1a2e,      0)
+c_ceHdr  = color.new(#0d47a1,      0)
+c_peHdr  = color.new(#880e4f,      0)
+c_atmRow = color.new(#37474f,      0)
+c_spotHdr= color.new(#004d40,      0)
+
+sig_color(s) =>
+    s == "BUY" ? c_buy : s == "SELL" ? c_sell : c_wait
+
+trend_color(tr) =>
+    tr == "BULL" ? c_bull : c_bear
+
+pos_color(p) =>
+    str.contains(p, "▲") ? c_bull : c_bear
+
+// ================= TABLE =================
+var table t = table.new(position.top_right, 11, 14,
+     border_width=1, border_color=color.new(color.gray,60),
+     frame_width=2,  frame_color=color.new(color.gray,40))
+
+if barstate.isfirst
+    table.cell(t, 0, 0, "Signal",  bgcolor=c_ceHdr, text_color=c_white, text_size=size.normal)
+    table.cell(t, 1, 0, "Trend",   bgcolor=c_ceHdr, text_color=c_white, text_size=size.normal)
+    table.cell(t, 2, 0, "RSI",     bgcolor=c_ceHdr, text_color=c_white, text_size=size.normal)
+    table.cell(t, 3, 0, "Pos",     bgcolor=c_ceHdr, text_color=c_white, text_size=size.normal)
+    table.cell(t, 4, 0, "CE LTP",  bgcolor=c_ceHdr, text_color=c_white, text_size=size.normal)
+    table.cell(t, 5, 0, "STRIKE",  bgcolor=c_dark,  text_color=c_white, text_size=size.normal)
+    table.cell(t, 6, 0, "PE LTP",  bgcolor=c_peHdr, text_color=c_white, text_size=size.normal)
+    table.cell(t, 7, 0, "Pos",     bgcolor=c_peHdr, text_color=c_white, text_size=size.normal)
+    table.cell(t, 8, 0, "RSI",     bgcolor=c_peHdr, text_color=c_white, text_size=size.normal)
+    table.cell(t, 9, 0, "Trend",   bgcolor=c_peHdr, text_color=c_white, text_size=size.normal)
+    table.cell(t,10, 0, "Signal",  bgcolor=c_peHdr, text_color=c_white, text_size=size.normal)
+
+table.cell(t, 0, 1, "NIFTY SPOT", bgcolor=c_spotHdr, text_color=c_white, text_size=size.normal)
+table.merge_cells(t, 0, 1, 1, 1)
+table.cell(t, 2, 1, str.tostring(n_rsi, "#.0"), bgcolor=c_spotHdr, text_color=f_rsi_color(n_rsi), text_size=size.normal)
+table.cell(t, 3, 1, n_vwap_pos + " " + n_ema50_pos, bgcolor=c_spotHdr, text_color=pos_color(n_vwap_pos), text_size=size.normal)
+table.cell(t, 4, 1, str.tostring(n_close, "#.0"), bgcolor=c_spotHdr, text_color=c_white, text_size=size.normal)
+table.cell(t, 5, 1, "SPOT", bgcolor=c_spotHdr, text_color=c_white, text_size=size.normal)
+table.cell(t, 6, 1, str.tostring(n_close, "#.0"), bgcolor=c_spotHdr, text_color=c_white, text_size=size.normal)
+table.cell(t, 7, 1, n_ema50_pos, bgcolor=c_spotHdr, text_color=pos_color(n_ema50_pos), text_size=size.normal)
+table.cell(t, 8, 1, str.tostring(n_rsi, "#.0"), bgcolor=c_spotHdr, text_color=f_rsi_color(n_rsi), text_size=size.normal)
+table.cell(t, 9, 1, n_trend, bgcolor=c_spotHdr, text_color=trend_color(n_trend), text_size=size.normal)
+table.cell(t,10, 1, n_signal, bgcolor=c_spotHdr, text_color=sig_color(n_signal), text_size=size.normal)
+
+f_row(row, strike_val, isATM,
+      ce_sig, ce_tr, ce_rsi, ce_vp, ce_ep, ce_pr,
+      pe_sig, pe_tr, pe_rsi, pe_vp, pe_ep, pe_pr) =>
+
+    bg = isATM ? c_atmRow : c_dark
+    stk_lbl = isATM ? "► " + str.tostring(strike_val) + " ◄" : str.tostring(strike_val)
+    stk_col = isATM ? color.yellow : c_white
+
+    table.cell(t, 0, row, ce_sig,  bgcolor=bg, text_color=sig_color(ce_sig),   text_size=size.normal)
+    table.cell(t, 1, row, ce_tr,   bgcolor=bg, text_color=trend_color(ce_tr),  text_size=size.normal)
+    table.cell(t, 2, row, str.tostring(ce_rsi,"#.0"), bgcolor=bg, text_color=f_rsi_color(ce_rsi), text_size=size.normal)
+    table.cell(t, 3, row, ce_vp+" "+ce_ep, bgcolor=bg, text_color=pos_color(ce_vp), text_size=size.normal)
+    table.cell(t, 4, row, str.tostring(ce_pr,"#.0"), bgcolor=bg, text_color=c_white, text_size=size.normal)
+    table.cell(t, 5, row, stk_lbl, bgcolor=isATM ? color.new(color.yellow,70) : color.new(color.gray,80), text_color=stk_col, text_size=size.normal)
+    table.cell(t, 6, row, str.tostring(pe_pr,"#.0"), bgcolor=bg, text_color=c_white, text_size=size.normal)
+    table.cell(t, 7, row, pe_vp+" "+pe_ep, bgcolor=bg, text_color=pos_color(pe_vp), text_size=size.normal)
+    table.cell(t, 8, row, str.tostring(pe_rsi,"#.0"), bgcolor=bg, text_color=f_rsi_color(pe_rsi), text_size=size.normal)
+    table.cell(t, 9, row, pe_tr,   bgcolor=bg, text_color=trend_color(pe_tr),  text_size=size.normal)
+    table.cell(t,10, row, pe_sig,  bgcolor=bg, text_color=sig_color(pe_sig),   text_size=size.normal)
+
+// ── PE mirrored: row2=OTM2, row3=OTM1, row4=ATM, row5=ITM1, row6=ITM2 ──
+f_row(2, ce_itm2, false, ce_itm2_s, ce_itm2_t, ce_itm2_r, ce_itm2_v, ce_itm2_e, ce_itm2_p, pe_otm2_s, pe_otm2_t, pe_otm2_r, pe_otm2_v, pe_otm2_e, pe_otm2_p)
+f_row(3, ce_itm1, false, ce_itm1_s, ce_itm1_t, ce_itm1_r, ce_itm1_v, ce_itm1_e, ce_itm1_p, pe_otm1_s, pe_otm1_t, pe_otm1_r, pe_otm1_v, pe_otm1_e, pe_otm1_p)
+f_row(4, ce_atm,  true,  ce_atm_s,  ce_atm_t,  ce_atm_r,  ce_atm_v,  ce_atm_e,  ce_atm_p,  pe_atm_s,  pe_atm_t,  pe_atm_r,  pe_atm_v,  pe_atm_e,  pe_atm_p)
+f_row(5, ce_otm1, false, ce_otm1_s, ce_otm1_t, ce_otm1_r, ce_otm1_v, ce_otm1_e, ce_otm1_p, pe_itm1_s, pe_itm1_t, pe_itm1_r, pe_itm1_v, pe_itm1_e, pe_itm1_p)
+f_row(6, ce_otm2, false, ce_otm2_s, ce_otm2_t, ce_otm2_r, ce_otm2_v, ce_otm2_e, ce_otm2_p, pe_itm2_s, pe_itm2_t, pe_itm2_r, pe_itm2_v, pe_itm2_e, pe_itm2_p)
+
+// ================= ALERTS =================
+alertcondition(n_crossUp,   "NIFTY BUY CROSS",  "NIFTY EMA9 crossed above EMA26 - BUY")
+alertcondition(n_crossDown, "NIFTY SELL CROSS",  "NIFTY EMA9 crossed below EMA26 - SELL")
+
+alertcondition(ce_itm2_cu, "CE ITM2 BUY",  "CE ITM2 BUY CONFIRM")
+alertcondition(ce_itm2_cd, "CE ITM2 SELL", "CE ITM2 SELL CONFIRM")
+alertcondition(ce_itm1_cu, "CE ITM1 BUY",  "CE ITM1 BUY CONFIRM")
+alertcondition(ce_itm1_cd, "CE ITM1 SELL", "CE ITM1 SELL CONFIRM")
+alertcondition(ce_atm_cu,  "CE ATM BUY",   "CE ATM BUY CONFIRM")
+alertcondition(ce_atm_cd,  "CE ATM SELL",  "CE ATM SELL CONFIRM")
+alertcondition(ce_otm1_cu, "CE OTM1 BUY",  "CE OTM1 BUY CONFIRM")
+alertcondition(ce_otm1_cd, "CE OTM1 SELL", "CE OTM1 SELL CONFIRM")
+alertcondition(ce_otm2_cu, "CE OTM2 BUY",  "CE OTM2 BUY CONFIRM")
+alertcondition(ce_otm2_cd, "CE OTM2 SELL", "CE OTM2 SELL CONFIRM")
+
+alertcondition(pe_itm2_cu, "PE ITM2 BUY",  "PE ITM2 BUY CONFIRM")
+alertcondition(pe_itm2_cd, "PE ITM2 SELL", "PE ITM2 SELL CONFIRM")
+alertcondition(pe_itm1_cu, "PE ITM1 BUY",  "PE ITM1 BUY CONFIRM")
+alertcondition(pe_itm1_cd, "PE ITM1 SELL", "PE ITM1 SELL CONFIRM")
+alertcondition(pe_atm_cu,  "PE ATM BUY",   "PE ATM BUY CONFIRM")
+alertcondition(pe_atm_cd,  "PE ATM SELL",  "PE ATM SELL CONFIRM")
+alertcondition(pe_otm1_cu, "PE OTM1 BUY",  "PE OTM1 BUY CONFIRM")
+alertcondition(pe_otm1_cd, "PE OTM1 SELL", "PE OTM1 SELL CONFIRM")
+alertcondition(pe_otm2_cu, "PE OTM2 BUY",  "PE OTM2 BUY CONFIRM")
+alertcondition(pe_otm2_cd, "PE OTM2 SELL", "PE OTM2 SELL CONFIRM")
+
+alertcondition(n_crossUp   or ce_atm_cu or pe_atm_cu, "ANY BUY",  "Buy signal triggered")
+alertcondition(n_crossDown or ce_atm_cd or pe_atm_cd, "ANY SELL", "Sell signal triggered")
+
+// ================= PLOT LABELS — STAGGERED (NO OVERLAP) =================
+candleH = high - low
+base    = math.max(candleH, syminfo.mintick * 20) * spacerMult
+
+lvl1 = base * 1
+lvl2 = base * 2
+lvl3 = base * 3
+lvl4 = base * 4
+lvl5 = base * 5
+
+// ══════════ CE BUY (below bar, bar-1) ══════════
+if ce_otm2_cu
+    label.new(bar_index - 1, low - lvl1,
+         text="CE " + str.tostring(ce_otm2) + "\nOTM2 BUY",
+         style=label.style_label_up, color=color.new(#01579b,0),
+         textcolor=color.white, size=size.small)
+
+if ce_otm1_cu
+    label.new(bar_index - 1, low - lvl2,
+         text="CE " + str.tostring(ce_otm1) + "\nOTM1 BUY",
+         style=label.style_label_up, color=color.new(#0288d1,0),
+         textcolor=color.white, size=size.small)
+
+if ce_atm_cu
+    label.new(bar_index - 1, low - lvl3,
+         text="CE " + str.tostring(ce_atm) + "\nATM  BUY",
+         style=label.style_label_up, color=color.new(#1e88e5,0),
+         textcolor=color.white, size=size.small)
+
+if ce_itm1_cu
+    label.new(bar_index - 1, low - lvl4,
+         text="CE " + str.tostring(ce_itm1) + "\nITM1 BUY",
+         style=label.style_label_up, color=color.new(#1565c0,0),
+         textcolor=color.white, size=size.small)
+
+if ce_itm2_cu
+    label.new(bar_index - 1, low - lvl5,
+         text="CE " + str.tostring(ce_itm2) + "\nITM2 BUY",
+         style=label.style_label_up, color=color.new(#0d47a1,0),
+         textcolor=color.white, size=size.small)
+
+// ══════════ CE SELL (above bar, bar-1) ══════════
+if ce_otm2_cd
+    label.new(bar_index - 1, high + lvl1,
+         text="CE " + str.tostring(ce_otm2) + "\nOTM2 SELL",
+         style=label.style_label_down, color=color.new(#01579b,0),
+         textcolor=color.white, size=size.small)
+
+if ce_otm1_cd
+    label.new(bar_index - 1, high + lvl2,
+         text="CE " + str.tostring(ce_otm1) + "\nOTM1 SELL",
+         style=label.style_label_down, color=color.new(#0288d1,0),
+         textcolor=color.white, size=size.small)
+
+if ce_atm_cd
+    label.new(bar_index - 1, high + lvl3,
+         text="CE " + str.tostring(ce_atm) + "\nATM  SELL",
+         style=label.style_label_down, color=color.new(#1e88e5,0),
+         textcolor=color.white, size=size.small)
+
+if ce_itm1_cd
+    label.new(bar_index - 1, high + lvl4,
+         text="CE " + str.tostring(ce_itm1) + "\nITM1 SELL",
+         style=label.style_label_down, color=color.new(#1565c0,0),
+         textcolor=color.white, size=size.small)
+
+if ce_itm2_cd
+    label.new(bar_index - 1, high + lvl5,
+         text="CE " + str.tostring(ce_itm2) + "\nITM2 SELL",
+         style=label.style_label_down, color=color.new(#0d47a1,0),
+         textcolor=color.white, size=size.small)
+
+// ══════════ PE BUY (below bar, bar+1) ══════════
+if pe_otm2_cu
+    label.new(bar_index + 1, low - lvl1,
+         text="PE " + str.tostring(pe_otm2) + "\nOTM2 BUY",
+         style=label.style_label_up, color=color.new(#f06292,0),
+         textcolor=color.white, size=size.small)
+
+if pe_otm1_cu
+    label.new(bar_index + 1, low - lvl2,
+         text="PE " + str.tostring(pe_otm1) + "\nOTM1 BUY",
+         style=label.style_label_up, color=color.new(#c2185b,0),
+         textcolor=color.white, size=size.small)
+
+if pe_atm_cu
+    label.new(bar_index + 1, low - lvl3,
+         text="PE " + str.tostring(pe_atm) + "\nATM  BUY",
+         style=label.style_label_up, color=color.new(#e91e63,0),
+         textcolor=color.white, size=size.small)
+
+if pe_itm1_cu
+    label.new(bar_index + 1, low - lvl4,
+         text="PE " + str.tostring(pe_itm1) + "\nITM1 BUY",
+         style=label.style_label_up, color=color.new(#ad1457,0),
+         textcolor=color.white, size=size.small)
+
+if pe_itm2_cu
+    label.new(bar_index + 1, low - lvl5,
+         text="PE " + str.tostring(pe_itm2) + "\nITM2 BUY",
+         style=label.style_label_up, color=color.new(#880e4f,0),
+         textcolor=color.white, size=size.small)
+
+// ══════════ PE SELL (above bar, bar+1) ══════════
+if pe_otm2_cd
+    label.new(bar_index + 1, high + lvl1,
+         text="PE " + str.tostring(pe_otm2) + "\nOTM2 SELL",
+         style=label.style_label_down, color=color.new(#f06292,0),
+         textcolor=color.white, size=size.small)
+
+if pe_otm1_cd
+    label.new(bar_index + 1, high + lvl2,
+         text="PE " + str.tostring(pe_otm1) + "\nOTM1 SELL",
+         style=label.style_label_down, color=color.new(#c2185b,0),
+         textcolor=color.white, size=size.small)
+
+if pe_atm_cd
+    label.new(bar_index + 1, high + lvl3,
+         text="PE " + str.tostring(pe_atm) + "\nATM  SELL",
+         style=label.style_label_down, color=color.new(#e91e63,0),
+         textcolor=color.white, size=size.small)
+
+if pe_itm1_cd
+    label.new(bar_index + 1, high + lvl4,
+         text="PE " + str.tostring(pe_itm1) + "\nITM1 SELL",
+         style=label.style_label_down, color=color.new(#ad1457,0),
+         textcolor=color.white, size=size.small)
+
+if pe_itm2_cd
+    label.new(bar_index + 1, high + lvl5,
+         text="PE " + str.tostring(pe_itm2) + "\nITM2 SELL",
+         style=label.style_label_down, color=color.new(#880e4f,0),
+         textcolor=color.white, size=size.small)
