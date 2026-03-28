@@ -146,7 +146,7 @@ c_atmRow  = color.new(#37474f,      0)
 c_spacer  = color.new(#0a0a0a,      0)
 c_yellow  = color.new(color.yellow, 0)
 c_ydark   = color.new(#1a1700,      0)
-c_macdHdr = color.new(#1b5e20,      0)  // deep green for SPOT MACD columns
+c_macdHdr = color.new(#1b5e20,      0)
 
 sig_color(s) =>
     s == "BUY" ? c_buy : s == "SELL" ? c_sell : c_wait
@@ -157,63 +157,51 @@ trend_color(tr) =>
 pos_color(p) =>
     str.contains(p, "▲") ? c_bull : c_bear
 
-// ── Total columns: 11 (base) + 3 (MACD, only when showMacd=true) ──
-totalCols = showMacd ? 14 : 11
-
 // ================= TABLE =================
-// Cols  0-10 : options layout (always shown)
-// Cols 11-13 : SPOT MACD (only when showMacd = true)
-var table t = table.new(position.top_right, 14, 11,
+var table t = table.new(position.bottom_right, 14, 11,
      border_width=1, border_color=color.new(color.gray,60),
      frame_width=2,  frame_color=color.new(color.gray,40))
 
 if barstate.isfirst
-    // ── Always-visible options column headers ──
-    table.cell(t, 0, 0, "Signal",  bgcolor=c_ceHdr, text_color=c_white, text_size=size.normal)
-    table.cell(t, 1, 0, "Trend",   bgcolor=c_ceHdr, text_color=c_white, text_size=size.normal)
-    table.cell(t, 2, 0, "RSI",     bgcolor=c_ceHdr, text_color=c_white, text_size=size.normal)
-    table.cell(t, 3, 0, "Pos",     bgcolor=c_ceHdr, text_color=c_white, text_size=size.normal)
-    table.cell(t, 4, 0, "CE LTP",  bgcolor=c_ceHdr, text_color=c_white, text_size=size.normal)
-    table.cell(t, 5, 0, "STRIKE",  bgcolor=c_dark,  text_color=c_white, text_size=size.normal)
-    table.cell(t, 6, 0, "PE LTP",  bgcolor=c_peHdr, text_color=c_white, text_size=size.normal)
-    table.cell(t, 7, 0, "Pos",     bgcolor=c_peHdr, text_color=c_white, text_size=size.normal)
-    table.cell(t, 8, 0, "RSI",     bgcolor=c_peHdr, text_color=c_white, text_size=size.normal)
-    table.cell(t, 9, 0, "Trend",   bgcolor=c_peHdr, text_color=c_white, text_size=size.normal)
-    table.cell(t,10, 0, "Signal",  bgcolor=c_peHdr, text_color=c_white, text_size=size.normal)
-    // ── MACD column headers — only drawn when showMacd is true ──
+    table.cell(t, 0, 0, "Signal",  bgcolor=c_ceHdr, text_color=c_white, text_size=size.small)
+    table.cell(t, 1, 0, "Trend",   bgcolor=c_ceHdr, text_color=c_white, text_size=size.small)
+    table.cell(t, 2, 0, "RSI",     bgcolor=c_ceHdr, text_color=c_white, text_size=size.small)
+    table.cell(t, 3, 0, "Pos",     bgcolor=c_ceHdr, text_color=c_white, text_size=size.small)
+    table.cell(t, 4, 0, "CE LTP",  bgcolor=c_ceHdr, text_color=c_white, text_size=size.small)
+    table.cell(t, 5, 0, "STRIKE",  bgcolor=c_dark,  text_color=c_white, text_size=size.small)
+    table.cell(t, 6, 0, "PE LTP",  bgcolor=c_peHdr, text_color=c_white, text_size=size.small)
+    table.cell(t, 7, 0, "Pos",     bgcolor=c_peHdr, text_color=c_white, text_size=size.small)
+    table.cell(t, 8, 0, "RSI",     bgcolor=c_peHdr, text_color=c_white, text_size=size.small)
+    table.cell(t, 9, 0, "Trend",   bgcolor=c_peHdr, text_color=c_white, text_size=size.small)
+    table.cell(t,10, 0, "Signal",  bgcolor=c_peHdr, text_color=c_white, text_size=size.small)
     if showMacd
-        table.cell(t,11, 0, "MACD\nCross", bgcolor=c_macdHdr, text_color=c_white, text_size=size.normal)
-        table.cell(t,12, 0, "Hist\n±",     bgcolor=c_macdHdr, text_color=c_white, text_size=size.normal)
-        table.cell(t,13, 0, "Hist\nStr",   bgcolor=c_macdHdr, text_color=c_white, text_size=size.normal)
+        table.cell(t,11, 0, "MACD\nX",  bgcolor=c_macdHdr, text_color=c_white, text_size=size.small)
+        table.cell(t,12, 0, "H±",        bgcolor=c_macdHdr, text_color=c_white, text_size=size.small)
+        table.cell(t,13, 0, "Str",        bgcolor=c_macdHdr, text_color=c_white, text_size=size.small)
 
-// ── Options row helper ──
-// MACD cols (11-13) are NEVER populated for option rows regardless of showMacd.
-// When showMacd=true they simply remain blank/transparent so the column header is visible
-// but no option MACD data is ever shown.
 f_row(row, strike_val, isATM,
       ce_sig, ce_tr, ce_rsi, ce_vp, ce_ep, ce_pr,
       pe_sig, pe_tr, pe_rsi, pe_vp, pe_ep, pe_pr) =>
 
     bg = isATM ? c_atmRow : c_dark
-    stk_lbl = isATM ? "► " + str.tostring(strike_val) + " ◄" : str.tostring(strike_val)
+    stk_lbl = isATM ? "►" + str.tostring(strike_val) + "◄" : str.tostring(strike_val)
     stk_col = isATM ? color.yellow : c_white
 
-    table.cell(t, 0, row, ce_sig,  bgcolor=bg, text_color=sig_color(ce_sig),   text_size=size.normal)
-    table.cell(t, 1, row, ce_tr,   bgcolor=bg, text_color=trend_color(ce_tr),  text_size=size.normal)
-    table.cell(t, 2, row, str.tostring(ce_rsi,"#.0"), bgcolor=bg, text_color=f_rsi_color(ce_rsi), text_size=size.normal)
-    table.cell(t, 3, row, ce_vp+" "+ce_ep, bgcolor=bg, text_color=pos_color(ce_vp), text_size=size.normal)
-    table.cell(t, 4, row, str.tostring(ce_pr,"#.0"), bgcolor=bg, text_color=c_white, text_size=size.normal)
-    table.cell(t, 5, row, stk_lbl, bgcolor=isATM ? color.new(color.yellow,70) : color.new(color.gray,80), text_color=stk_col, text_size=size.normal)
-    table.cell(t, 6, row, str.tostring(pe_pr,"#.0"), bgcolor=bg, text_color=c_white, text_size=size.normal)
-    table.cell(t, 7, row, pe_vp+" "+pe_ep, bgcolor=bg, text_color=pos_color(pe_vp), text_size=size.normal)
-    table.cell(t, 8, row, str.tostring(pe_rsi,"#.0"), bgcolor=bg, text_color=f_rsi_color(pe_rsi), text_size=size.normal)
-    table.cell(t, 9, row, pe_tr,   bgcolor=bg, text_color=trend_color(pe_tr),  text_size=size.normal)
-    table.cell(t,10, row, pe_sig,  bgcolor=bg, text_color=sig_color(pe_sig),   text_size=size.normal)
-    // ── MACD cols for options rows: always empty (SPOT-only feature) ──
+    table.cell(t, 0, row, ce_sig,  bgcolor=bg, text_color=sig_color(ce_sig),   text_size=size.small)
+    table.cell(t, 1, row, ce_tr,   bgcolor=bg, text_color=trend_color(ce_tr),  text_size=size.small)
+    table.cell(t, 2, row, str.tostring(ce_rsi,"#.0"), bgcolor=bg, text_color=f_rsi_color(ce_rsi), text_size=size.small)
+    table.cell(t, 3, row, ce_vp+" "+ce_ep, bgcolor=bg, text_color=pos_color(ce_vp), text_size=size.small)
+    table.cell(t, 4, row, str.tostring(ce_pr,"#.0"), bgcolor=bg, text_color=c_white, text_size=size.small)
+    table.cell(t, 5, row, stk_lbl, bgcolor=isATM ? color.new(color.yellow,70) : color.new(color.gray,80), text_color=stk_col, text_size=size.small)
+    table.cell(t, 6, row, str.tostring(pe_pr,"#.0"), bgcolor=bg, text_color=c_white, text_size=size.small)
+    table.cell(t, 7, row, pe_vp+" "+pe_ep, bgcolor=bg, text_color=pos_color(pe_vp), text_size=size.small)
+    table.cell(t, 8, row, str.tostring(pe_rsi,"#.0"), bgcolor=bg, text_color=f_rsi_color(pe_rsi), text_size=size.small)
+    table.cell(t, 9, row, pe_tr,   bgcolor=bg, text_color=trend_color(pe_tr),  text_size=size.small)
+    table.cell(t,10, row, pe_sig,  bgcolor=bg, text_color=sig_color(pe_sig),   text_size=size.small)
     if showMacd
-        table.cell(t,11, row, "", bgcolor=c_dark, text_color=c_gray, text_size=size.normal)
-        table.cell(t,12, row, "", bgcolor=c_dark, text_color=c_gray, text_size=size.normal)
-        table.cell(t,13, row, "", bgcolor=c_dark, text_color=c_gray, text_size=size.normal)
+        table.cell(t,11, row, "", bgcolor=c_dark, text_color=c_gray, text_size=size.small)
+        table.cell(t,12, row, "", bgcolor=c_dark, text_color=c_gray, text_size=size.small)
+        table.cell(t,13, row, "", bgcolor=c_dark, text_color=c_gray, text_size=size.small)
 
 // ── Populate strike rows ──
 if isExpiry
@@ -241,40 +229,38 @@ for col = 0 to 13
     table.cell(t, col, spacer_row, "", bgcolor=c_spacer, text_size=size.tiny)
 
 // ── Spot header row ──
-table.cell(t, 0, spot_hdr_row, "Signal",  bgcolor=c_yellow, text_color=c_dark, text_size=size.normal)
-table.cell(t, 1, spot_hdr_row, "Trend",   bgcolor=c_yellow, text_color=c_dark, text_size=size.normal)
-table.cell(t, 2, spot_hdr_row, "RSI",     bgcolor=c_yellow, text_color=c_dark, text_size=size.normal)
-table.cell(t, 3, spot_hdr_row, "Pos",     bgcolor=c_yellow, text_color=c_dark, text_size=size.normal)
-table.cell(t, 4, spot_hdr_row, "LTP",     bgcolor=c_yellow, text_color=c_dark, text_size=size.normal)
-table.cell(t, 5, spot_hdr_row, "SPOT",    bgcolor=c_yellow, text_color=c_dark, text_size=size.normal)
-table.cell(t, 6, spot_hdr_row, "LTP",     bgcolor=c_yellow, text_color=c_dark, text_size=size.normal)
-table.cell(t, 7, spot_hdr_row, "Pos",     bgcolor=c_yellow, text_color=c_dark, text_size=size.normal)
-table.cell(t, 8, spot_hdr_row, "RSI",     bgcolor=c_yellow, text_color=c_dark, text_size=size.normal)
-table.cell(t, 9, spot_hdr_row, "Trend",   bgcolor=c_yellow, text_color=c_dark, text_size=size.normal)
-table.cell(t,10, spot_hdr_row, "Signal",  bgcolor=c_yellow, text_color=c_dark, text_size=size.normal)
-// ── MACD sub-headers in spot header row — only when showMacd = true ──
+table.cell(t, 0, spot_hdr_row, "Signal",  bgcolor=c_yellow, text_color=c_dark, text_size=size.small)
+table.cell(t, 1, spot_hdr_row, "Trend",   bgcolor=c_yellow, text_color=c_dark, text_size=size.small)
+table.cell(t, 2, spot_hdr_row, "RSI",     bgcolor=c_yellow, text_color=c_dark, text_size=size.small)
+table.cell(t, 3, spot_hdr_row, "Pos",     bgcolor=c_yellow, text_color=c_dark, text_size=size.small)
+table.cell(t, 4, spot_hdr_row, "LTP",     bgcolor=c_yellow, text_color=c_dark, text_size=size.small)
+table.cell(t, 5, spot_hdr_row, "SPOT",    bgcolor=c_yellow, text_color=c_dark, text_size=size.small)
+table.cell(t, 6, spot_hdr_row, "LTP",     bgcolor=c_yellow, text_color=c_dark, text_size=size.small)
+table.cell(t, 7, spot_hdr_row, "Pos",     bgcolor=c_yellow, text_color=c_dark, text_size=size.small)
+table.cell(t, 8, spot_hdr_row, "RSI",     bgcolor=c_yellow, text_color=c_dark, text_size=size.small)
+table.cell(t, 9, spot_hdr_row, "Trend",   bgcolor=c_yellow, text_color=c_dark, text_size=size.small)
+table.cell(t,10, spot_hdr_row, "Signal",  bgcolor=c_yellow, text_color=c_dark, text_size=size.small)
 if showMacd
-    table.cell(t,11, spot_hdr_row, "MACD\nCross", bgcolor=c_macdHdr, text_color=c_white, text_size=size.normal)
-    table.cell(t,12, spot_hdr_row, "Hist\n±",     bgcolor=c_macdHdr, text_color=c_white, text_size=size.normal)
-    table.cell(t,13, spot_hdr_row, "Hist\nStr",   bgcolor=c_macdHdr, text_color=c_white, text_size=size.normal)
+    table.cell(t,11, spot_hdr_row, "MACD\nX", bgcolor=c_macdHdr, text_color=c_white, text_size=size.small)
+    table.cell(t,12, spot_hdr_row, "H±",       bgcolor=c_macdHdr, text_color=c_white, text_size=size.small)
+    table.cell(t,13, spot_hdr_row, "Str",       bgcolor=c_macdHdr, text_color=c_white, text_size=size.small)
 
 // ── Spot data row ──
-table.cell(t, 0, spot_dat_row, n_signal,                        bgcolor=c_yellow, text_color=sig_color(n_signal),    text_size=size.normal)
-table.cell(t, 1, spot_dat_row, n_trend,                         bgcolor=c_yellow, text_color=trend_color(n_trend),   text_size=size.normal)
-table.cell(t, 2, spot_dat_row, str.tostring(n_rsi, "#.0"),      bgcolor=c_yellow, text_color=f_rsi_color(n_rsi),     text_size=size.normal)
-table.cell(t, 3, spot_dat_row, n_vwap_pos + " " + n_ema50_pos, bgcolor=c_yellow, text_color=pos_color(n_vwap_pos),  text_size=size.normal)
-table.cell(t, 4, spot_dat_row, str.tostring(n_close, "#.0"),    bgcolor=c_yellow, text_color=c_dark,                 text_size=size.normal)
-table.cell(t, 5, spot_dat_row, indexName,                       bgcolor=c_yellow, text_color=c_dark,                 text_size=size.normal)
-table.cell(t, 6, spot_dat_row, str.tostring(n_close, "#.0"),    bgcolor=c_yellow, text_color=c_dark,                 text_size=size.normal)
-table.cell(t, 7, spot_dat_row, n_ema50_pos,                     bgcolor=c_yellow, text_color=pos_color(n_ema50_pos), text_size=size.normal)
-table.cell(t, 8, spot_dat_row, str.tostring(n_rsi, "#.0"),      bgcolor=c_yellow, text_color=f_rsi_color(n_rsi),     text_size=size.normal)
-table.cell(t, 9, spot_dat_row, n_trend,                         bgcolor=c_yellow, text_color=trend_color(n_trend),   text_size=size.normal)
-table.cell(t,10, spot_dat_row, n_signal,                        bgcolor=c_yellow, text_color=sig_color(n_signal),    text_size=size.normal)
-// ── MACD data for SPOT — only rendered when showMacd = true ──
+table.cell(t, 0, spot_dat_row, n_signal,                        bgcolor=c_yellow, text_color=sig_color(n_signal),    text_size=size.small)
+table.cell(t, 1, spot_dat_row, n_trend,                         bgcolor=c_yellow, text_color=trend_color(n_trend),   text_size=size.small)
+table.cell(t, 2, spot_dat_row, str.tostring(n_rsi, "#.0"),      bgcolor=c_yellow, text_color=f_rsi_color(n_rsi),     text_size=size.small)
+table.cell(t, 3, spot_dat_row, n_vwap_pos + " " + n_ema50_pos, bgcolor=c_yellow, text_color=pos_color(n_vwap_pos),  text_size=size.small)
+table.cell(t, 4, spot_dat_row, str.tostring(n_close, "#.0"),    bgcolor=c_yellow, text_color=c_dark,                 text_size=size.small)
+table.cell(t, 5, spot_dat_row, indexName,                       bgcolor=c_yellow, text_color=c_dark,                 text_size=size.small)
+table.cell(t, 6, spot_dat_row, str.tostring(n_close, "#.0"),    bgcolor=c_yellow, text_color=c_dark,                 text_size=size.small)
+table.cell(t, 7, spot_dat_row, n_ema50_pos,                     bgcolor=c_yellow, text_color=pos_color(n_ema50_pos), text_size=size.small)
+table.cell(t, 8, spot_dat_row, str.tostring(n_rsi, "#.0"),      bgcolor=c_yellow, text_color=f_rsi_color(n_rsi),     text_size=size.small)
+table.cell(t, 9, spot_dat_row, n_trend,                         bgcolor=c_yellow, text_color=trend_color(n_trend),   text_size=size.small)
+table.cell(t,10, spot_dat_row, n_signal,                        bgcolor=c_yellow, text_color=sig_color(n_signal),    text_size=size.small)
 if showMacd
-    table.cell(t,11, spot_dat_row, n_macd_cross, bgcolor=c_yellow, text_color=f_macd_cross_color(n_macd_cross), text_size=size.normal)
-    table.cell(t,12, spot_dat_row, n_hist_sign,  bgcolor=c_yellow, text_color=f_hist_sign_color(n_hist_sign),   text_size=size.normal)
-    table.cell(t,13, spot_dat_row, n_strength,   bgcolor=c_yellow, text_color=f_strength_color(n_macd_cross),   text_size=size.normal)
+    table.cell(t,11, spot_dat_row, n_macd_cross, bgcolor=c_yellow, text_color=f_macd_cross_color(n_macd_cross), text_size=size.small)
+    table.cell(t,12, spot_dat_row, n_hist_sign,  bgcolor=c_yellow, text_color=f_hist_sign_color(n_hist_sign),   text_size=size.small)
+    table.cell(t,13, spot_dat_row, n_strength,   bgcolor=c_yellow, text_color=f_strength_color(n_macd_cross),   text_size=size.small)
 
 // ================= ALERTS =================
 alertcondition(n_crossUp,   "NIFTY BUY CROSS",  "NIFTY EMA9 crossed above EMA26 - BUY")
@@ -305,7 +291,6 @@ alertcondition(pe_otm2_cd, "PE OTM2 SELL", "PE OTM2 SELL CONFIRM")
 alertcondition(n_crossUp   or ce_atm_cu or pe_atm_cu, "ANY BUY",  "Buy signal triggered")
 alertcondition(n_crossDown or ce_atm_cd or pe_atm_cd, "ANY SELL", "Sell signal triggered")
 
-// ── Extra expiry alerts ──
 alertcondition(ce_itm3_cu, "CE ITM3 BUY",  "CE ITM3 BUY CONFIRM")
 alertcondition(ce_itm3_cd, "CE ITM3 SELL", "CE ITM3 SELL CONFIRM")
 alertcondition(ce_otm3_cu, "CE OTM3 BUY",  "CE OTM3 BUY CONFIRM")
@@ -327,174 +312,212 @@ lvl5 = base * 5
 lvl6 = base * 6
 lvl7 = base * 7
 
-// ══════════ CE BUY (below bar, bar-1) ══════════
+// ══════════════════════════════════════════════════════════
+// CE BUY — label_up, LEFT side (bar_index-1), below candle
+// CE shade ramp (light → dark): #01579b → #0288d1 → #1e88e5 → #1565c0 → #0d47a1 → #004c8c → #002171
+// ══════════════════════════════════════════════════════════
 if ce_otm2_cu
     label.new(bar_index - 1, low - lvl1,
-         text="CE " + str.tostring(ce_otm2) + "\nOTM2 BUY",
-         style=label.style_label_up, color=color.new(#01579b,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_otm2) + " OTM2 B",
+         style=label.style_label_up,
+         color=color.new(#01579b, 0),
+         textcolor=color.white, size=size.tiny)
 
 if ce_otm1_cu
     label.new(bar_index - 1, low - lvl2,
-         text="CE " + str.tostring(ce_otm1) + "\nOTM1 BUY",
-         style=label.style_label_up, color=color.new(#0288d1,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_otm1) + " OTM1 B",
+         style=label.style_label_up,
+         color=color.new(#0288d1, 0),
+         textcolor=color.white, size=size.tiny)
 
 if ce_atm_cu
     label.new(bar_index - 1, low - lvl3,
-         text="CE " + str.tostring(ce_atm) + "\nATM  BUY",
-         style=label.style_label_up, color=color.new(#1e88e5,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_atm) + " ATM  B",
+         style=label.style_label_up,
+         color=color.new(#1e88e5, 0),
+         textcolor=color.white, size=size.tiny)
 
 if ce_itm1_cu
     label.new(bar_index - 1, low - lvl4,
-         text="CE " + str.tostring(ce_itm1) + "\nITM1 BUY",
-         style=label.style_label_up, color=color.new(#1565c0,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_itm1) + " ITM1 B",
+         style=label.style_label_up,
+         color=color.new(#1565c0, 0),
+         textcolor=color.white, size=size.tiny)
 
 if ce_itm2_cu
     label.new(bar_index - 1, low - lvl5,
-         text="CE " + str.tostring(ce_itm2) + "\nITM2 BUY",
-         style=label.style_label_up, color=color.new(#0d47a1,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_itm2) + " ITM2 B",
+         style=label.style_label_up,
+         color=color.new(#0d47a1, 0),
+         textcolor=color.white, size=size.tiny)
 
 if isExpiry and ce_otm3_cu
     label.new(bar_index - 1, low - lvl6,
-         text="CE " + str.tostring(ce_otm3) + "\nOTM3 BUY",
-         style=label.style_label_up, color=color.new(#004d40,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_otm3) + " OTM3 B",
+         style=label.style_label_up,
+         color=color.new(#004c8c, 0),
+         textcolor=color.white, size=size.tiny)
 
 if isExpiry and ce_itm3_cu
     label.new(bar_index - 1, low - lvl7,
-         text="CE " + str.tostring(ce_itm3) + "\nITM3 BUY",
-         style=label.style_label_up, color=color.new(#00251a,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_itm3) + " ITM3 B",
+         style=label.style_label_up,
+         color=color.new(#002171, 0),
+         textcolor=color.white, size=size.tiny)
 
-// ══════════ CE SELL (above bar, bar-1) ══════════
+// ══════════════════════════════════════════════════════════
+// CE SELL — label_down, LEFT side (bar_index-1), above candle
+// ══════════════════════════════════════════════════════════
 if ce_otm2_cd
     label.new(bar_index - 1, high + lvl1,
-         text="CE " + str.tostring(ce_otm2) + "\nOTM2 SELL",
-         style=label.style_label_down, color=color.new(#01579b,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_otm2) + " OTM2 S",
+         style=label.style_label_down,
+         color=color.new(#01579b, 0),
+         textcolor=color.white, size=size.tiny)
 
 if ce_otm1_cd
     label.new(bar_index - 1, high + lvl2,
-         text="CE " + str.tostring(ce_otm1) + "\nOTM1 SELL",
-         style=label.style_label_down, color=color.new(#0288d1,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_otm1) + " OTM1 S",
+         style=label.style_label_down,
+         color=color.new(#0288d1, 0),
+         textcolor=color.white, size=size.tiny)
 
 if ce_atm_cd
     label.new(bar_index - 1, high + lvl3,
-         text="CE " + str.tostring(ce_atm) + "\nATM  SELL",
-         style=label.style_label_down, color=color.new(#1e88e5,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_atm) + " ATM  S",
+         style=label.style_label_down,
+         color=color.new(#1e88e5, 0),
+         textcolor=color.white, size=size.tiny)
 
 if ce_itm1_cd
     label.new(bar_index - 1, high + lvl4,
-         text="CE " + str.tostring(ce_itm1) + "\nITM1 SELL",
-         style=label.style_label_down, color=color.new(#1565c0,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_itm1) + " ITM1 S",
+         style=label.style_label_down,
+         color=color.new(#1565c0, 0),
+         textcolor=color.white, size=size.tiny)
 
 if ce_itm2_cd
     label.new(bar_index - 1, high + lvl5,
-         text="CE " + str.tostring(ce_itm2) + "\nITM2 SELL",
-         style=label.style_label_down, color=color.new(#0d47a1,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_itm2) + " ITM2 S",
+         style=label.style_label_down,
+         color=color.new(#0d47a1, 0),
+         textcolor=color.white, size=size.tiny)
 
 if isExpiry and ce_otm3_cd
     label.new(bar_index - 1, high + lvl6,
-         text="CE " + str.tostring(ce_otm3) + "\nOTM3 SELL",
-         style=label.style_label_down, color=color.new(#004d40,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_otm3) + " OTM3 S",
+         style=label.style_label_down,
+         color=color.new(#004c8c, 0),
+         textcolor=color.white, size=size.tiny)
 
 if isExpiry and ce_itm3_cd
     label.new(bar_index - 1, high + lvl7,
-         text="CE " + str.tostring(ce_itm3) + "\nITM3 SELL",
-         style=label.style_label_down, color=color.new(#00251a,0),
-         textcolor=color.white, size=size.small)
+         text="CE " + str.tostring(ce_itm3) + " ITM3 S",
+         style=label.style_label_down,
+         color=color.new(#002171, 0),
+         textcolor=color.white, size=size.tiny)
 
-// ══════════ PE BUY (below bar, bar+1) ══════════
+// ══════════════════════════════════════════════════════════
+// PE BUY — label_up, RIGHT side (bar_index+1), below candle
+// PE shade ramp (light → dark): #f06292 → #c2185b → #e91e63 → #ad1457 → #880e4f → #560027 → #3e0020
+// ══════════════════════════════════════════════════════════
 if pe_otm2_cu
     label.new(bar_index + 1, low - lvl1,
-         text="PE " + str.tostring(pe_otm2) + "\nOTM2 BUY",
-         style=label.style_label_up, color=color.new(#f06292,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_otm2) + " OTM2 B",
+         style=label.style_label_up,
+         color=color.new(#f06292, 0),
+         textcolor=color.white, size=size.tiny)
 
 if pe_otm1_cu
     label.new(bar_index + 1, low - lvl2,
-         text="PE " + str.tostring(pe_otm1) + "\nOTM1 BUY",
-         style=label.style_label_up, color=color.new(#c2185b,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_otm1) + " OTM1 B",
+         style=label.style_label_up,
+         color=color.new(#c2185b, 0),
+         textcolor=color.white, size=size.tiny)
 
 if pe_atm_cu
     label.new(bar_index + 1, low - lvl3,
-         text="PE " + str.tostring(pe_atm) + "\nATM  BUY",
-         style=label.style_label_up, color=color.new(#e91e63,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_atm) + " ATM  B",
+         style=label.style_label_up,
+         color=color.new(#e91e63, 0),
+         textcolor=color.white, size=size.tiny)
 
 if pe_itm1_cu
     label.new(bar_index + 1, low - lvl4,
-         text="PE " + str.tostring(pe_itm1) + "\nITM1 BUY",
-         style=label.style_label_up, color=color.new(#ad1457,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_itm1) + " ITM1 B",
+         style=label.style_label_up,
+         color=color.new(#ad1457, 0),
+         textcolor=color.white, size=size.tiny)
 
 if pe_itm2_cu
     label.new(bar_index + 1, low - lvl5,
-         text="PE " + str.tostring(pe_itm2) + "\nITM2 BUY",
-         style=label.style_label_up, color=color.new(#880e4f,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_itm2) + " ITM2 B",
+         style=label.style_label_up,
+         color=color.new(#880e4f, 0),
+         textcolor=color.white, size=size.tiny)
 
 if isExpiry and pe_otm3_cu
     label.new(bar_index + 1, low - lvl6,
-         text="PE " + str.tostring(pe_otm3) + "\nOTM3 BUY",
-         style=label.style_label_up, color=color.new(#4a0072,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_otm3) + " OTM3 B",
+         style=label.style_label_up,
+         color=color.new(#560027, 0),
+         textcolor=color.white, size=size.tiny)
 
 if isExpiry and pe_itm3_cu
     label.new(bar_index + 1, low - lvl7,
-         text="PE " + str.tostring(pe_itm3) + "\nITM3 BUY",
-         style=label.style_label_up, color=color.new(#1a0033,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_itm3) + " ITM3 B",
+         style=label.style_label_up,
+         color=color.new(#3e0020, 0),
+         textcolor=color.white, size=size.tiny)
 
-// ══════════ PE SELL (above bar, bar+1) ══════════
+// ══════════════════════════════════════════════════════════
+// PE SELL — label_down, RIGHT side (bar_index+1), above candle
+// ══════════════════════════════════════════════════════════
 if pe_otm2_cd
     label.new(bar_index + 1, high + lvl1,
-         text="PE " + str.tostring(pe_otm2) + "\nOTM2 SELL",
-         style=label.style_label_down, color=color.new(#f06292,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_otm2) + " OTM2 S",
+         style=label.style_label_down,
+         color=color.new(#f06292, 0),
+         textcolor=color.white, size=size.tiny)
 
 if pe_otm1_cd
     label.new(bar_index + 1, high + lvl2,
-         text="PE " + str.tostring(pe_otm1) + "\nOTM1 SELL",
-         style=label.style_label_down, color=color.new(#c2185b,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_otm1) + " OTM1 S",
+         style=label.style_label_down,
+         color=color.new(#c2185b, 0),
+         textcolor=color.white, size=size.tiny)
 
 if pe_atm_cd
     label.new(bar_index + 1, high + lvl3,
-         text="PE " + str.tostring(pe_atm) + "\nATM  SELL",
-         style=label.style_label_down, color=color.new(#e91e63,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_atm) + " ATM  S",
+         style=label.style_label_down,
+         color=color.new(#e91e63, 0),
+         textcolor=color.white, size=size.tiny)
 
 if pe_itm1_cd
     label.new(bar_index + 1, high + lvl4,
-         text="PE " + str.tostring(pe_itm1) + "\nITM1 SELL",
-         style=label.style_label_down, color=color.new(#ad1457,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_itm1) + " ITM1 S",
+         style=label.style_label_down,
+         color=color.new(#ad1457, 0),
+         textcolor=color.white, size=size.tiny)
 
 if pe_itm2_cd
     label.new(bar_index + 1, high + lvl5,
-         text="PE " + str.tostring(pe_itm2) + "\nITM2 SELL",
-         style=label.style_label_down, color=color.new(#880e4f,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_itm2) + " ITM2 S",
+         style=label.style_label_down,
+         color=color.new(#880e4f, 0),
+         textcolor=color.white, size=size.tiny)
 
 if isExpiry and pe_otm3_cd
     label.new(bar_index + 1, high + lvl6,
-         text="PE " + str.tostring(pe_otm3) + "\nOTM3 SELL",
-         style=label.style_label_down, color=color.new(#4a0072,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_otm3) + " OTM3 S",
+         style=label.style_label_down,
+         color=color.new(#560027, 0),
+         textcolor=color.white, size=size.tiny)
 
 if isExpiry and pe_itm3_cd
     label.new(bar_index + 1, high + lvl7,
-         text="PE " + str.tostring(pe_itm3) + "\nITM3 SELL",
-         style=label.style_label_down, color=color.new(#1a0033,0),
-         textcolor=color.white, size=size.small)
+         text="PE " + str.tostring(pe_itm3) + " ITM3 S",
+         style=label.style_label_down,
+         color=color.new(#3e0020, 0),
+         textcolor=color.white, size=size.tiny)
