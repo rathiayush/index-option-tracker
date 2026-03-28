@@ -419,34 +419,55 @@ else if pe_buy_count > 5 or ce_sell_count > 5
 barcolor(candle_color)
 
 // ================= PLOT LABELS (stacked, no gaps) =================
-// Use string concatenation for perfectly stacked labels to prevent overlapping
-// This natively prevents 'overlay/overlap' on single bars.
-
 var int last_up_pos   = -5
 var int up_lvl        = 0
 
 var int last_down_pos = -5
 var int down_lvl      = 0
 
-// Use ATR to dynamically scale the spacing distance in price terms
 float y_step = nz(ta.atr(14)) * (spacerMult * 0.2)
+
+// ── SPOT context suffix (VWAP, EMA50, RSI) — appended to every alert ──
+// Built once per bar and reused in all label/alert text below
+spot_ctx = " | SPOT " + n_vwap_pos + " " + n_ema50_pos + " RSI:" + str.tostring(n_rsi, "#.0")
 
 // ── CE BUY counters (below candle, LEFT) ──
 string cb_txt = ""
+
 if ce_otm2_cu
+    txt = "BUY CE " + str.tostring(ce_otm2) + " OTM2" + " | " + ce_otm2_v + " " + ce_otm2_e + " RSI:" + str.tostring(ce_otm2_r,"#.0") + spot_ctx
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm2) + " OTM2 B"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if ce_otm1_cu
+    txt = "BUY CE " + str.tostring(ce_otm1) + " OTM1" + " | " + ce_otm1_v + " " + ce_otm1_e + " RSI:" + str.tostring(ce_otm1_r,"#.0") + spot_ctx
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm1) + " OTM1 B"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if ce_atm_cu
-    cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_atm) + " ATM  B"
+    txt = "BUY CE " + str.tostring(ce_atm) + " ATM" + " | " + ce_atm_v + " " + ce_atm_e + " RSI:" + str.tostring(ce_atm_r,"#.0") + spot_ctx
+    cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_atm) + " ATM B"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if ce_itm1_cu
+    txt = "BUY CE " + str.tostring(ce_itm1) + " ITM1" + " | " + ce_itm1_v + " " + ce_itm1_e + " RSI:" + str.tostring(ce_itm1_r,"#.0") + spot_ctx
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm1) + " ITM1 B"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if ce_itm2_cu
+    txt = "BUY CE " + str.tostring(ce_itm2) + " ITM2" + " | " + ce_itm2_v + " " + ce_itm2_e + " RSI:" + str.tostring(ce_itm2_r,"#.0") + spot_ctx
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm2) + " ITM2 B"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if isExpiry and ce_otm3_cu
+    txt = "BUY CE " + str.tostring(ce_otm3) + " OTM3" + " | " + ce_otm3_v + " " + ce_otm3_e + " RSI:" + str.tostring(ce_otm3_r,"#.0") + spot_ctx
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm3) + " OTM3 B"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if isExpiry and ce_itm3_cu
+    txt = "BUY CE " + str.tostring(ce_itm3) + " ITM3" + " | " + ce_itm3_v + " " + ce_itm3_e + " RSI:" + str.tostring(ce_itm3_r,"#.0") + spot_ctx
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm3) + " ITM3 B"
+    alert(txt, alert.freq_once_per_bar_close)
 
 if cb_txt != ""
     int pos = bar_index - 1
@@ -459,22 +480,44 @@ if cb_txt != ""
     float plot_y = low - (y_step * up_lvl)
     label.new(pos, plot_y, text=cb_txt, style=label.style_label_up, color=color.new(#1565c0, 0), textcolor=color.white, size=size.tiny)
 
+
 // ── CE SELL counters (above candle, LEFT) ──
 string cs_txt = ""
+
 if ce_otm2_cd
+    txt = "SELL CE " + str.tostring(ce_otm2) + " OTM2" + " | " + ce_otm2_v + " " + ce_otm2_e + " RSI:" + str.tostring(ce_otm2_r,"#.0") + spot_ctx
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm2) + " OTM2 S"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if ce_otm1_cd
+    txt = "SELL CE " + str.tostring(ce_otm1) + " OTM1" + " | " + ce_otm1_v + " " + ce_otm1_e + " RSI:" + str.tostring(ce_otm1_r,"#.0") + spot_ctx
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm1) + " OTM1 S"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if ce_atm_cd
-    cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_atm) + " ATM  S"
+    txt = "SELL CE " + str.tostring(ce_atm) + " ATM" + " | " + ce_atm_v + " " + ce_atm_e + " RSI:" + str.tostring(ce_atm_r,"#.0") + spot_ctx
+    cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_atm) + " ATM S"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if ce_itm1_cd
+    txt = "SELL CE " + str.tostring(ce_itm1) + " ITM1" + " | " + ce_itm1_v + " " + ce_itm1_e + " RSI:" + str.tostring(ce_itm1_r,"#.0") + spot_ctx
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm1) + " ITM1 S"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if ce_itm2_cd
+    txt = "SELL CE " + str.tostring(ce_itm2) + " ITM2" + " | " + ce_itm2_v + " " + ce_itm2_e + " RSI:" + str.tostring(ce_itm2_r,"#.0") + spot_ctx
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm2) + " ITM2 S"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if isExpiry and ce_otm3_cd
+    txt = "SELL CE " + str.tostring(ce_otm3) + " OTM3" + " | " + ce_otm3_v + " " + ce_otm3_e + " RSI:" + str.tostring(ce_otm3_r,"#.0") + spot_ctx
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm3) + " OTM3 S"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if isExpiry and ce_itm3_cd
+    txt = "SELL CE " + str.tostring(ce_itm3) + " ITM3" + " | " + ce_itm3_v + " " + ce_itm3_e + " RSI:" + str.tostring(ce_itm3_r,"#.0") + spot_ctx
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm3) + " ITM3 S"
+    alert(txt, alert.freq_once_per_bar_close)
 
 if cs_txt != ""
     int pos = bar_index - 1
@@ -487,58 +530,60 @@ if cs_txt != ""
     float plot_y = high + (y_step * down_lvl)
     label.new(pos, plot_y, text=cs_txt, style=label.style_label_down, color=color.new(#1565c0, 0), textcolor=color.white, size=size.tiny)
 
+
 // ── PE BUY counters (below candle, RIGHT) ──
 string pb_txt = ""
+
 if pe_otm2_cu
+    txt = "BUY PE " + str.tostring(pe_otm2) + " OTM2" + " | " + pe_otm2_v + " " + pe_otm2_e + " RSI:" + str.tostring(pe_otm2_r,"#.0") + spot_ctx
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm2) + " OTM2 B"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if pe_otm1_cu
+    txt = "BUY PE " + str.tostring(pe_otm1) + " OTM1" + " | " + pe_otm1_v + " " + pe_otm1_e + " RSI:" + str.tostring(pe_otm1_r,"#.0") + spot_ctx
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm1) + " OTM1 B"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if pe_atm_cu
-    pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_atm) + " ATM  B"
+    txt = "BUY PE " + str.tostring(pe_atm) + " ATM" + " | " + pe_atm_v + " " + pe_atm_e + " RSI:" + str.tostring(pe_atm_r,"#.0") + spot_ctx
+    pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_atm) + " ATM B"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if pe_itm1_cu
+    txt = "BUY PE " + str.tostring(pe_itm1) + " ITM1" + " | " + pe_itm1_v + " " + pe_itm1_e + " RSI:" + str.tostring(pe_itm1_r,"#.0") + spot_ctx
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm1) + " ITM1 B"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if pe_itm2_cu
+    txt = "BUY PE " + str.tostring(pe_itm2) + " ITM2" + " | " + pe_itm2_v + " " + pe_itm2_e + " RSI:" + str.tostring(pe_itm2_r,"#.0") + spot_ctx
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm2) + " ITM2 B"
-if isExpiry and pe_otm3_cu
-    pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm3) + " OTM3 B"
-if isExpiry and pe_itm3_cu
-    pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm3) + " ITM3 B"
+    alert(txt, alert.freq_once_per_bar_close)
 
 if pb_txt != ""
     int pos = bar_index + 1
-    if pos - last_up_pos <= 3
-        up_lvl := (up_lvl + 1) % 4
-    else
-        up_lvl := 0
-    last_up_pos := pos
-
     float plot_y = low - (y_step * up_lvl)
     label.new(pos, plot_y, text=pb_txt, style=label.style_label_up, color=color.new(#ad1457, 0), textcolor=color.white, size=size.tiny)
 
+
 // ── PE SELL counters (above candle, RIGHT) ──
 string ps_txt = ""
+
 if pe_otm2_cd
+    txt = "SELL PE " + str.tostring(pe_otm2) + " OTM2" + " | " + pe_otm2_v + " " + pe_otm2_e + " RSI:" + str.tostring(pe_otm2_r,"#.0") + spot_ctx
     ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm2) + " OTM2 S"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if pe_otm1_cd
+    txt = "SELL PE " + str.tostring(pe_otm1) + " OTM1" + " | " + pe_otm1_v + " " + pe_otm1_e + " RSI:" + str.tostring(pe_otm1_r,"#.0") + spot_ctx
     ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm1) + " OTM1 S"
+    alert(txt, alert.freq_once_per_bar_close)
+
 if pe_atm_cd
-    ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_atm) + " ATM  S"
-if pe_itm1_cd
-    ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm1) + " ITM1 S"
-if pe_itm2_cd
-    ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm2) + " ITM2 S"
-if isExpiry and pe_otm3_cd
-    ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm3) + " OTM3 S"
-if isExpiry and pe_itm3_cd
-    ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm3) + " ITM3 S"
+    txt = "SELL PE " + str.tostring(pe_atm) + " ATM" + " | " + pe_atm_v + " " + pe_atm_e + " RSI:" + str.tostring(pe_atm_r,"#.0") + spot_ctx
+    ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_atm) + " ATM S"
+    alert(txt, alert.freq_once_per_bar_close)
 
 if ps_txt != ""
     int pos = bar_index + 1
-    if pos - last_down_pos <= 3
-        down_lvl := (down_lvl + 1) % 4
-    else
-        down_lvl := 0
-    last_down_pos := pos
-
     float plot_y = high + (y_step * down_lvl)
     label.new(pos, plot_y, text=ps_txt, style=label.style_label_down, color=color.new(#ad1457, 0), textcolor=color.white, size=size.tiny)
