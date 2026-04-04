@@ -417,7 +417,9 @@ float y_step = nz(ta.atr(14)) * (spacerMult * 0.2)
 // Format: {"chat_id":"-1003533948678","text":"<content>"}
 // <content> uses \n for line breaks inside the Telegram message
 f_json(txt) =>
-    '{"chat_id":"-1003533948678","text":"' + txt + ' | TF: ' + timeframe.period + '"}'
+    sanitized = str.replace_all(txt, "\n", "\\n")
+    sanitized := str.replace_all(sanitized, '"', '\\"')
+    '{"chat_id":"-1003533948678","text":"' + sanitized + ' | TF: ' + timeframe.period + '"}'
 
 // ── SPOT context line (appended to every option alert text) ──
 // *** CHANGED: added SPOT price and timeframe explicitly for clarity ***
