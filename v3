@@ -29,6 +29,7 @@ obvThreshPct  = input.float(1.0,  "OBV Trend Threshold %", minval=0.1, maxval=10
                  tooltip="% change in smoothed OBV to classify as Increasing/Decreasing vs Stable")
 stFactor      = input.float(3.0,  "SPOT Supertrend Factor", minval=0.5, step=0.5)
 stAtrLen      = input.int(10,     "SPOT Supertrend ATR Length", minval=2, maxval=100)
+showST        = input.bool(true,  "Show SPOT Supertrend on Chart")
 
 // ================= NIFTY SPOT =================
 n_close = request.security(niftySymbol, timeframe.period, close)
@@ -57,6 +58,10 @@ n_hist     = n_macd - n_macd_sig
 [n_st, n_st_dir] = ta.supertrend(stFactor, stAtrLen)
 n_st_flip = ta.change(n_st_dir) != 0
 n_st_trend = n_st_dir < 0 ? "BULL" : "BEAR"
+
+// ── Plot Supertrend ──
+stColor = n_st_dir < 0 ? color.new(color.lime, 0) : color.new(color.red, 0)
+plot(showST ? n_st : na, title="SPOT Supertrend", color=stColor, linewidth=2, style=plot.style_line)
 
 // ── SPOT ATR ──
 n_atr = ta.atr(14)
