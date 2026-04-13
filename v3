@@ -30,6 +30,8 @@ obvThreshPct  = input.float(1.0,  "OBV Trend Threshold %", minval=0.1, maxval=10
 stFactor      = input.float(3.0,  "SPOT Supertrend Factor", minval=0.5, step=0.5)
 stAtrLen      = input.int(10,     "SPOT Supertrend ATR Length", minval=2, maxval=100)
 showST        = input.bool(true,  "Show SPOT Supertrend on Chart")
+showSignalTags = input.bool(true, "Show Buy/Sell Signal Tags on Chart")
+showTable       = input.bool(true, "Show Dashboard Table")
 
 // ================= NIFTY SPOT =================
 n_close = request.security(niftySymbol, timeframe.period, close)
@@ -177,6 +179,7 @@ f_signal(sym) =>
 // ================= OBV — DAY RESET + AGGREGATE =================
 // Detect start of new trading day
 isNewDay = ta.change(time("D")) != 0
+isDayStart = isNewDay or barstate.isfirst
 
 // ── Raw aggregate OBV (sum across all active strikes) ──
 // For non-expiry: 5 CE + 5 PE strikes
@@ -192,19 +195,19 @@ var float ce_obv_2nd_candle = na
 var float pe_obv_2nd_candle = na
 var int   barsSinceDayStart = 0
 
-if isNewDay
+if isDayStart
     barsSinceDayStart := 0
+    ce_obv_daystart := raw_ce_obv
+    pe_obv_daystart := raw_pe_obv
+    ce_obv_2nd_candle := na
+    pe_obv_2nd_candle := na
 else
     barsSinceDayStart += 1
 
-if isNewDay or na(ce_obv_daystart)
-    ce_obv_daystart := raw_ce_obv
-if isNewDay or na(pe_obv_daystart)
-    pe_obv_daystart := raw_pe_obv
-
 // Capture 2nd candle OBV (1 bar after new day)
-if barsSinceDayStart == 1
+if barsSinceDayStart == 1 and na(ce_obv_2nd_candle)
     ce_obv_2nd_candle := raw_ce_obv
+if barsSinceDayStart == 1 and na(pe_obv_2nd_candle)
     pe_obv_2nd_candle := raw_pe_obv
 
 ce_obv_day = raw_ce_obv - nz(ce_obv_daystart, raw_ce_obv)
@@ -331,7 +334,8 @@ f_isLiveATM(strikeVal) =>
 // OBV rows are appended at the bottom dynamically
 var table t = table.new(position.bottom_right, 14, 18, border_color=color.new(color.gray,60), frame_width=2, frame_color=color.new(color.gray,40))
 
-if barstate.isfirst
+if barstate.islast and showTable
+    // Header row
     table.cell(t, 0, 0, "Signal",  bgcolor=c_ceHdr, text_color=c_white, text_size=tableTextSize)
     table.cell(t, 1, 0, "Trend",   bgcolor=c_ceHdr, text_color=c_white, text_size=tableTextSize)
     table.cell(t, 2, 0, "RSI",     bgcolor=c_ceHdr, text_color=c_white, text_size=tableTextSize)
@@ -552,6 +556,12 @@ table.cell(t,11, obv_tot_row, "CE:",                     bgcolor=c_obvBg, text_c
 table.cell(t,12, obv_tot_row, str.tostring(ce_obv_2nd_candle/1000,"#.0")+"K", bgcolor=c_obvBg, text_color=c_white, text_size=tableTextSize)
 table.cell(t,13, obv_tot_row, "PE:"+str.tostring(pe_obv_2nd_candle/1000,"#.0")+"K", bgcolor=c_obvBg, text_color=c_white, text_size=tableTextSize)
 
+// Hide full table when toggle is OFF
+if barstate.islast and not showTable
+    for r = 0 to 17
+        for c = 0 to 13
+            table.cell(t, c, r, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.black, 100), text_size=size.tiny)
+
 // ================= CANDLE COLORING =================
 int ce_buy_count = (ce_otm2_cu ? 1 : 0) + (ce_otm1_cu ? 1 : 0) + (ce_atm_cu ? 1 : 0) + (ce_itm1_cu ? 1 : 0) + (ce_itm2_cu ? 1 : 0) + (ce_otm3_cu ? 1 : 0) + (ce_itm3_cu ? 1 : 0)
 int pe_sell_count = (pe_otm2_cd ? 1 : 0) + (pe_otm1_cd ? 1 : 0) + (pe_atm_cd ? 1 : 0) + (pe_itm1_cd ? 1 : 0) + (pe_itm2_cd ? 1 : 0) + (pe_otm3_cd ? 1 : 0) + (pe_itm3_cd ? 1 : 0)
@@ -648,7 +658,7 @@ if ce_itm3_cu
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
-if cb_txt != ""
+if cb_txt != "" and showSignalTags
     if bar_index - last_up_pos <= 3
         up_lvl := (up_lvl + 1) % 4
     else
@@ -702,7 +712,7 @@ if ce_itm3_cd
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
-if cs_txt != ""
+if cs_txt != "" and showSignalTags
     if bar_index - last_down_pos <= 3
         down_lvl := (down_lvl + 1) % 4
     else
@@ -744,7 +754,7 @@ if pe_itm2_cu
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
-if pb_txt != ""
+if pb_txt != "" and showSignalTags
     float plot_y = low - (y_step * up_lvl)
     label.new(bar_index, plot_y, text=pb_txt, style=label.style_label_up, color=color.new(#ad1457, 0), textcolor=color.white, size=size.tiny)
 
@@ -769,7 +779,7 @@ if pe_atm_cd
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
-if ps_txt != ""
+if ps_txt != "" and showSignalTags
     float plot_y = high + (y_step * down_lvl)
     label.new(bar_index, plot_y, text=ps_txt, style=label.style_label_down, color=color.new(#ad1457, 0), textcolor=color.white, size=size.tiny)
 
