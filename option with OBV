@@ -178,73 +178,62 @@ f_signal(sym) =>
 
 // ================= OBV — DAY RESET + AGGREGATE =================
 // Detect start of new trading day
-isNewDay  = ta.change(time("D")) != 0
+isNewDay = ta.change(time("D")) != 0
 isDayStart = isNewDay or barstate.isfirst
 
-// ── FIX 1: raw_pe_obv was duplicating pe_itm3_obv — corrected to pe_otm3_obv ──
+// ── Raw aggregate OBV (sum across all active strikes) ──
+// For non-expiry: 5 CE + 5 PE strikes
+// For expiry:     7 CE + 7 PE strikes (includes ITM3/OTM3)
 raw_ce_obv = ce_itm2_obv + ce_itm1_obv + ce_atm_obv + ce_otm1_obv + ce_otm2_obv + ce_itm3_obv + ce_otm3_obv
-raw_pe_obv = pe_itm2_obv + pe_itm1_obv + pe_atm_obv + pe_otm1_obv + pe_otm2_obv + pe_itm3_obv + pe_otm3_obv  // FIXED: was pe_itm3_obv twice
 
-// ── Capture 1st candle aggregate OBV as the fixed daily base ──
-// ce_obv_base  = raw aggregate OBV locked at the 1st candle of each day (never changes during day)
-// ce_obv_day   = raw_ce_obv - base  = pure intraday delta (0 at open, grows +/- through day)
-// ce_obv_day_pct = ce_obv_day / abs(base) * 100  = % move from 1st candle level
-//   → starts at 0% each morning, shows exactly how much CE/PE aggregate OBV has moved
+raw_pe_obv = pe_itm2_obv + pe_itm1_obv + pe_atm_obv + pe_otm1_obv + pe_otm2_obv + pe_itm3_obv + pe_otm3_obv
 
-var float ce_obv_base   = na
-var float pe_obv_base   = na
-var float ce_obv_daystart = na  // alias kept for table footer display
+// ── Day-reset: subtract the value at start of each day ──
+var float ce_obv_daystart = na
 var float pe_obv_daystart = na
+var float ce_obv_2nd_candle = na
+var float pe_obv_2nd_candle = na
 var int   barsSinceDayStart = 0
-
-var float ce_obv_2nd = na   // aggregate OBV at close of 2nd candle (day-adjusted delta)
-var float pe_obv_2nd = na
 
 if isDayStart
     barsSinceDayStart := 0
-    ce_obv_base       := raw_ce_obv   // lock 1st candle as base
-    pe_obv_base       := raw_pe_obv
-    ce_obv_daystart   := raw_ce_obv
-    pe_obv_daystart   := raw_pe_obv
-    ce_obv_2nd        := na
-    pe_obv_2nd        := na
+    ce_obv_daystart := raw_ce_obv
+    pe_obv_daystart := raw_pe_obv
+    ce_obv_2nd_candle := na
+    pe_obv_2nd_candle := na
 else
     barsSinceDayStart += 1
 
-// ── Intraday delta from 1st candle base ──
-ce_obv_day = raw_ce_obv - nz(ce_obv_base, raw_ce_obv)
-pe_obv_day = raw_pe_obv - nz(pe_obv_base, raw_pe_obv)
+// Capture 2nd candle OBV (1 bar after new day)
+if barsSinceDayStart == 1 and na(ce_obv_2nd_candle)
+    ce_obv_2nd_candle := raw_ce_obv
+if barsSinceDayStart == 1 and na(pe_obv_2nd_candle)
+    pe_obv_2nd_candle := raw_pe_obv
 
-// Capture 2nd candle intraday delta (barsSinceDayStart == 1 = second bar of the day)
-if barsSinceDayStart == 1 and na(ce_obv_2nd)
-    ce_obv_2nd := ce_obv_day
-if barsSinceDayStart == 1 and na(pe_obv_2nd)
-    pe_obv_2nd := pe_obv_day
+ce_obv_day = raw_ce_obv - nz(ce_obv_daystart, raw_ce_obv)
+pe_obv_day = raw_pe_obv - nz(pe_obv_daystart, raw_pe_obv)
 
-// ── % change from 1st candle base (fixed denominator, never rolling) ──
-// At 9:15 bar: 0%  |  Grows cleanly +/- through the day
-ce_obv_day_pct = math.abs(nz(ce_obv_base, 0)) > 0 ?
-                 (ce_obv_day / math.abs(ce_obv_base)) * 100 : 0.0
-
-pe_obv_day_pct = math.abs(nz(pe_obv_base, 0)) > 0 ?
-                 (pe_obv_day / math.abs(pe_obv_base)) * 100 : 0.0
-
-// ── Smooth intraday delta with EMA for chart lines and direction classification ──
+// ── Smooth with EMA ──
 ce_obv_ema = ta.ema(ce_obv_day, obvEmaLen)
 pe_obv_ema = ta.ema(pe_obv_day, obvEmaLen)
 
-// ── Trend classification: bar-over-bar % change of smoothed OBV ──
+// ── Trend classification using % change of EMA ──
+// Increasing / Decreasing / Stable based on threshold
 ce_obv_chg_pct = na(ce_obv_ema[1]) or ce_obv_ema[1] == 0 ? 0.0 :
-                 (ce_obv_ema - ce_obv_ema[1]) / math.abs(ce_obv_ema[1]) * 100
+                 (ce_obv_ema - ce_obv_ema[1]) / math.abs(nz(ce_obv_ema[1], 1)) * 100
 
 pe_obv_chg_pct = na(pe_obv_ema[1]) or pe_obv_ema[1] == 0 ? 0.0 :
-                 (pe_obv_ema - pe_obv_ema[1]) / math.abs(pe_obv_ema[1]) * 100
+                 (pe_obv_ema - pe_obv_ema[1]) / math.abs(nz(pe_obv_ema[1], 1)) * 100
 
 // 1 = Increasing, 0 = Stable, -1 = Decreasing
 ce_obv_dir = ce_obv_chg_pct >  obvThreshPct ? 1 : ce_obv_chg_pct < -obvThreshPct ? -1 : 0
 pe_obv_dir = pe_obv_chg_pct >  obvThreshPct ? 1 : pe_obv_chg_pct < -obvThreshPct ? -1 : 0
 
+ce_obv_day_pct = math.abs(nz(ce_obv_daystart, 0.0)) > 0 ? (ce_obv_day / math.abs(ce_obv_daystart)) * 100 : 0.0
+pe_obv_day_pct = math.abs(nz(pe_obv_daystart, 0.0)) > 0 ? (pe_obv_day / math.abs(pe_obv_daystart)) * 100 : 0.0
+
 // ── OBV Bias Truth Table ──
+// Returns [bias_label, bias_emoji, bias_color]
 f_obv_bias(ce_dir, pe_dir) =>
     string lbl   = ""
     string emoji = ""
@@ -340,7 +329,10 @@ f_isLiveATM(strikeVal) =>
     autoATM and strikeVal == liveATM
 
 // ================= TABLE =================
-var table t = table.new(position.bottom_right, 14, 19, border_color=color.new(color.gray,60), frame_width=2, frame_color=color.new(color.gray,40))
+// Columns 0-10: existing dashboard
+// Columns 11-13: MACD (when showMacd=true)
+// OBV rows are appended at the bottom dynamically
+var table t = table.new(position.bottom_right, 14, 18, border_color=color.new(color.gray,60), frame_width=2, frame_color=color.new(color.gray,40))
 
 if barstate.islast and showTable
     // Header row
@@ -393,7 +385,7 @@ f_row(5, ce_otm1, liveATM == ce_otm1, ce_otm1_s, ce_otm1_t, ce_otm1_r, ce_otm1_v
 f_row(6, ce_otm2, liveATM == ce_otm2, ce_otm2_s, ce_otm2_t, ce_otm2_r, ce_otm2_v, ce_otm2_e, ce_otm2_p, pe_itm2_s, pe_itm2_t, pe_itm2_r, pe_itm2_v, pe_itm2_e, pe_itm2_p)
 f_row(7, ce_otm3, liveATM == ce_otm3, ce_otm3_s, ce_otm3_t, ce_otm3_r, ce_otm3_v, ce_otm3_e, ce_otm3_p, pe_itm3_s, pe_itm3_t, pe_itm3_r, pe_itm3_v, pe_itm3_e, pe_itm3_p)
 
-// ── Dynamic row indices ──
+// ── Dynamic row indices (7 levels) ──
 spacer_row   = 8
 spot_hdr_row = 9
 spot_dat_row = 10
@@ -403,7 +395,6 @@ obv_hdr_row  = 13
 obv_dat_row  = 14
 obv_int_row  = 15
 obv_tot_row  = 16
-obv_2nd_row  = 17
 
 // ── Spacer row ──
 for col = 0 to 13
@@ -490,12 +481,12 @@ if autoATM and needsRefresh
 table.cell(t, 0, obv_hdr_row, "CALL OBV",   bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
 table.cell(t, 1, obv_hdr_row, "Dir",         bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
 table.cell(t, 2, obv_hdr_row, "EMA Val",     bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
-table.cell(t, 3, obv_hdr_row, "Day%",        bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
+table.cell(t, 3, obv_hdr_row, "Day %",       bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
 table.cell(t, 4, obv_hdr_row, "│",           bgcolor=c_spacer, text_color=c_gray,   text_size=tableTextSize)
 table.cell(t, 5, obv_hdr_row, "PUT OBV",     bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
 table.cell(t, 6, obv_hdr_row, "Dir",         bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
 table.cell(t, 7, obv_hdr_row, "EMA Val",     bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
-table.cell(t, 8, obv_hdr_row, "Day%",        bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
+table.cell(t, 8, obv_hdr_row, "Day %",       bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
 table.cell(t, 9, obv_hdr_row, "│",           bgcolor=c_spacer, text_color=c_gray,   text_size=tableTextSize)
 table.cell(t,10, obv_hdr_row, "BIAS",        bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
 table.cell(t,11, obv_hdr_row, "",            bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
@@ -506,118 +497,75 @@ table.cell(t,13, obv_hdr_row, "",            bgcolor=c_obvHdr, text_color=c_whit
 ce_obv_dir_col = ce_obv_dir == 1 ? color.new(color.lime, 0) : ce_obv_dir == -1 ? color.new(color.red, 0) : color.new(color.gray, 0)
 pe_obv_dir_col = pe_obv_dir == 1 ? color.new(color.lime, 0) : pe_obv_dir == -1 ? color.new(color.red, 0) : color.new(color.gray, 0)
 
-// Day% color: positive = lime, negative = red, near-zero = gray
-ce_pct_col = ce_obv_day_pct > 10 ? color.new(color.lime, 0) : ce_obv_day_pct < -10 ? color.new(color.red, 0) : color.new(color.gray, 0)
-pe_pct_col = pe_obv_day_pct > 10 ? color.new(color.lime, 0) : pe_obv_day_pct < -10 ? color.new(color.red, 0) : color.new(color.gray, 0)
-
-table.cell(t, 0, obv_dat_row, "CE OBV",                                         bgcolor=c_obvBg, text_color=ce_obv_line_clr, text_size=tableTextSize)
-table.cell(t, 1, obv_dat_row, ce_dir_arrow,                                      bgcolor=c_obvBg, text_color=ce_obv_dir_col,  text_size=tableTextSize)
-table.cell(t, 2, obv_dat_row, str.tostring(ce_obv_ema / 1000, "#.0") + "K",     bgcolor=c_obvBg, text_color=c_white,          text_size=tableTextSize)
-table.cell(t, 3, obv_dat_row, str.tostring(ce_obv_day_pct, "#.0") + "%",        bgcolor=c_obvBg, text_color=ce_pct_col,       text_size=tableTextSize)
-table.cell(t, 4, obv_dat_row, "│",                                               bgcolor=c_spacer, text_color=c_gray,          text_size=tableTextSize)
-table.cell(t, 5, obv_dat_row, "PE OBV",                                         bgcolor=c_obvBg, text_color=pe_obv_line_clr, text_size=tableTextSize)
-table.cell(t, 6, obv_dat_row, pe_dir_arrow,                                      bgcolor=c_obvBg, text_color=pe_obv_dir_col,  text_size=tableTextSize)
-table.cell(t, 7, obv_dat_row, str.tostring(pe_obv_ema / 1000, "#.0") + "K",     bgcolor=c_obvBg, text_color=c_white,          text_size=tableTextSize)
-table.cell(t, 8, obv_dat_row, str.tostring(pe_obv_day_pct, "#.0") + "%",        bgcolor=c_obvBg, text_color=pe_pct_col,       text_size=tableTextSize)
-table.cell(t, 9, obv_dat_row, "│",                                               bgcolor=c_spacer, text_color=c_gray,          text_size=tableTextSize)
-table.cell(t,10, obv_dat_row, obv_bias_emoji + " " + obv_bias_lbl,              bgcolor=c_obvBg, text_color=obv_bias_clr,    text_size=tableTextSize)
-table.cell(t,11, obv_dat_row, "",                                                bgcolor=c_obvBg, text_color=c_gray,          text_size=tableTextSize)
-table.cell(t,12, obv_dat_row, "",                                                bgcolor=c_obvBg, text_color=c_gray,          text_size=tableTextSize)
-table.cell(t,13, obv_dat_row, "",                                                bgcolor=c_obvBg, text_color=c_gray,          text_size=tableTextSize)
+table.cell(t, 0, obv_dat_row, "CE OBV",                                      bgcolor=c_obvBg, text_color=ce_obv_line_clr, text_size=tableTextSize)
+table.cell(t, 1, obv_dat_row, ce_dir_arrow,                                   bgcolor=c_obvBg, text_color=ce_obv_dir_col,  text_size=tableTextSize)
+table.cell(t, 2, obv_dat_row, str.tostring(ce_obv_ema/1000,"#.0")+"K",                bgcolor=c_obvBg, text_color=c_white,          text_size=tableTextSize)
+table.cell(t, 3, obv_dat_row, str.tostring(ce_obv_day_pct, "#.00") + "%",    bgcolor=c_obvBg, text_color=ce_obv_dir_col,  text_size=tableTextSize)
+table.cell(t, 4, obv_dat_row, "│",                                            bgcolor=c_spacer, text_color=c_gray,          text_size=tableTextSize)
+table.cell(t, 5, obv_dat_row, "PE OBV",                                      bgcolor=c_obvBg, text_color=pe_obv_line_clr, text_size=tableTextSize)
+table.cell(t, 6, obv_dat_row, pe_dir_arrow,                                   bgcolor=c_obvBg, text_color=pe_obv_dir_col,  text_size=tableTextSize)
+table.cell(t, 7, obv_dat_row, str.tostring(pe_obv_ema/1000,"#.0")+"K",                bgcolor=c_obvBg, text_color=c_white,          text_size=tableTextSize)
+table.cell(t, 8, obv_dat_row, str.tostring(pe_obv_day_pct, "#.00") + "%",    bgcolor=c_obvBg, text_color=pe_obv_dir_col,  text_size=tableTextSize)
+table.cell(t, 9, obv_dat_row, "│",                                            bgcolor=c_spacer, text_color=c_gray,          text_size=tableTextSize)
+table.cell(t,10, obv_dat_row, obv_bias_emoji + " " + obv_bias_lbl,           bgcolor=c_obvBg, text_color=obv_bias_clr,    text_size=tableTextSize)
+table.cell(t,11, obv_dat_row, "",                                             bgcolor=c_obvBg, text_color=c_gray,          text_size=tableTextSize)
+table.cell(t,12, obv_dat_row, "",                                             bgcolor=c_obvBg, text_color=c_gray,          text_size=tableTextSize)
+table.cell(t,13, obv_dat_row, "",                                             bgcolor=c_obvBg, text_color=c_gray,          text_size=tableTextSize)
 
 // ── OBV Interpretation row ──
+// Map bias to interpretation text
 obv_interp =
-     obv_bias_lbl == "Strong Bullish"      ? "Strong call accumulation, puts unwinding" :
-     obv_bias_lbl == "Bullish"             ? "Call buying starting, puts neutral" :
+     obv_bias_lbl == "Strong Bullish"    ? "Strong call accumulation, puts unwinding" :
+     obv_bias_lbl == "Bullish"           ? "Call buying starting, puts neutral" :
      obv_bias_lbl == "Volatility/Breakout" ? "Both sides building — Breakout near!" :
-     obv_bias_lbl == "Mild Bullish"        ? "Put covering only" :
-     obv_bias_lbl == "Sideways"            ? "No strong activity" :
-     obv_bias_lbl == "Mild Bearish"        ? "Put buying slowly" :
-     obv_bias_lbl == "Strong Bearish"      ? "Put accumulation, calls unwinding" :
-     obv_bias_lbl == "Bearish"             ? "Call unwinding" :
-     obv_bias_lbl == "Low Volatility"      ? "Both sides closing — consolidation" : ""
+     obv_bias_lbl == "Mild Bullish"      ? "Put covering only" :
+     obv_bias_lbl == "Sideways"          ? "No strong activity" :
+     obv_bias_lbl == "Mild Bearish"      ? "Put buying slowly" :
+     obv_bias_lbl == "Strong Bearish"    ? "Put accumulation, calls unwinding" :
+     obv_bias_lbl == "Bearish"           ? "Call unwinding" :
+     obv_bias_lbl == "Low Volatility"    ? "Both sides closing — consolidation" : ""
 
-table.cell(t, 0, obv_int_row, "Interpretation:",  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t, 1, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t, 2, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t, 3, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t, 4, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t, 5, obv_int_row, obv_interp,          bgcolor=c_obvBg, text_color=obv_bias_clr, text_size=tableTextSize)
-table.cell(t, 6, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t, 7, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t, 8, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t, 9, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t,10, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t,11, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t,12, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t,13, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 0, obv_int_row, "Interpretation:",        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 1, obv_int_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 2, obv_int_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 3, obv_int_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 4, obv_int_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 5, obv_int_row, obv_interp,                bgcolor=c_obvBg, text_color=obv_bias_clr, text_size=tableTextSize)
+table.cell(t, 6, obv_int_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 7, obv_int_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 8, obv_int_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 9, obv_int_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t,10, obv_int_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t,11, obv_int_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t,12, obv_int_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t,13, obv_int_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
 
-// ── OBV Base (1st candle) vs Current row ──
-// Base = aggregate OBV locked at 1st candle (fixed all day)
-// Now  = current aggregate OBV  |  Δ = intraday move in K units
-table.cell(t, 0, obv_tot_row, "Base CE:",  bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
-table.cell(t, 1, obv_tot_row, str.tostring(nz(ce_obv_base, 0) / 1000, "#.0") + "K",
-                               bgcolor=c_obvBg, text_color=c_white,       text_size=tableTextSize)
-table.cell(t, 2, obv_tot_row, "Now:",      bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
-table.cell(t, 3, obv_tot_row, str.tostring(raw_ce_obv / 1000, "#.0") + "K",
-                               bgcolor=c_obvBg, text_color=ce_obv_dir_col, text_size=tableTextSize)
-table.cell(t, 4, obv_tot_row, "│",         bgcolor=c_spacer, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t, 5, obv_tot_row, "Base PE:",  bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
-table.cell(t, 6, obv_tot_row, str.tostring(nz(pe_obv_base, 0) / 1000, "#.0") + "K",
-                               bgcolor=c_obvBg, text_color=c_white,       text_size=tableTextSize)
-table.cell(t, 7, obv_tot_row, "Now:",      bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
-table.cell(t, 8, obv_tot_row, str.tostring(raw_pe_obv / 1000, "#.0") + "K",
-                               bgcolor=c_obvBg, text_color=pe_obv_dir_col, text_size=tableTextSize)
-table.cell(t, 9, obv_tot_row, "│",         bgcolor=c_spacer, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t,10, obv_tot_row, "Δ CE:",     bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
-table.cell(t,11, obv_tot_row, str.tostring(ce_obv_day / 1000, "#.0") + "K",
-                               bgcolor=c_obvBg, text_color=ce_obv_dir_col, text_size=tableTextSize)
-table.cell(t,12, obv_tot_row, "Δ PE:",     bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
-table.cell(t,13, obv_tot_row, str.tostring(pe_obv_day / 1000, "#.0") + "K",
-                               bgcolor=c_obvBg, text_color=pe_obv_dir_col, text_size=tableTextSize)
-
-// ── OBV 2nd candle row ──
-// Shows the aggregate OBV delta captured at close of the 2nd candle of the day
-// % from base = 2nd candle delta / abs(base) * 100 — useful as early-session reference
-ce_2nd_pct = math.abs(nz(ce_obv_base, 0)) > 0 and not na(ce_obv_2nd) ?
-             (ce_obv_2nd / math.abs(ce_obv_base)) * 100 : 0.0
-pe_2nd_pct = math.abs(nz(pe_obv_base, 0)) > 0 and not na(pe_obv_2nd) ?
-             (pe_obv_2nd / math.abs(pe_obv_base)) * 100 : 0.0
-
-ce_2nd_pct_col = ce_2nd_pct > 0 ? color.new(color.lime, 0) : ce_2nd_pct < 0 ? color.new(color.red, 0) : color.new(color.gray, 0)
-pe_2nd_pct_col = pe_2nd_pct > 0 ? color.new(color.lime, 0) : pe_2nd_pct < 0 ? color.new(color.red, 0) : color.new(color.gray, 0)
-
-table.cell(t, 0, obv_2nd_row, "2nd CE:",  bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
-table.cell(t, 1, obv_2nd_row, str.tostring(nz(ce_obv_2nd, 0) / 1000, "#.0") + "K",
-                               bgcolor=c_obvBg, text_color=c_white,       text_size=tableTextSize)
-table.cell(t, 2, obv_2nd_row, str.tostring(ce_2nd_pct, "#.0") + "%",
-                               bgcolor=c_obvBg, text_color=ce_2nd_pct_col, text_size=tableTextSize)
-table.cell(t, 3, obv_2nd_row, "",          bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
-table.cell(t, 4, obv_2nd_row, "│",         bgcolor=c_spacer, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t, 5, obv_2nd_row, "2nd PE:",  bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
-table.cell(t, 6, obv_2nd_row, str.tostring(nz(pe_obv_2nd, 0) / 1000, "#.0") + "K",
-                               bgcolor=c_obvBg, text_color=c_white,       text_size=tableTextSize)
-table.cell(t, 7, obv_2nd_row, str.tostring(pe_2nd_pct, "#.0") + "%",
-                               bgcolor=c_obvBg, text_color=pe_2nd_pct_col, text_size=tableTextSize)
-table.cell(t, 8, obv_2nd_row, "",          bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
-table.cell(t, 9, obv_2nd_row, "│",         bgcolor=c_spacer, text_color=c_gray,       text_size=tableTextSize)
-table.cell(t,10, obv_2nd_row, "Δ CE:",     bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
-table.cell(t,11, obv_2nd_row, str.tostring(nz(ce_obv_2nd, 0) / 1000, "#.0") + "K",
-                               bgcolor=c_obvBg, text_color=ce_2nd_pct_col, text_size=tableTextSize)
-table.cell(t,12, obv_2nd_row, "Δ PE:",     bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
-table.cell(t,13, obv_2nd_row, str.tostring(nz(pe_obv_2nd, 0) / 1000, "#.0") + "K",
-                               bgcolor=c_obvBg, text_color=pe_2nd_pct_col, text_size=tableTextSize)
+// ── OBV 1st Candle & 2nd Candle Total OBV row ──
+table.cell(t, 0, obv_tot_row, "1st Cdl",                 bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 1, obv_tot_row, "CE:",                     bgcolor=c_obvBg, text_color=c_white,      text_size=tableTextSize)
+table.cell(t, 2, obv_tot_row, str.tostring(ce_obv_daystart/1000,"#.0")+"K", bgcolor=c_obvBg, text_color=c_white, text_size=tableTextSize)
+table.cell(t, 3, obv_tot_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 4, obv_tot_row, "│",                       bgcolor=c_spacer, text_color=c_gray,      text_size=tableTextSize)
+table.cell(t, 5, obv_tot_row, "1st Cdl",                 bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 6, obv_tot_row, "PE:",                     bgcolor=c_obvBg, text_color=c_white,      text_size=tableTextSize)
+table.cell(t, 7, obv_tot_row, str.tostring(pe_obv_daystart/1000,"#.0")+"K", bgcolor=c_obvBg, text_color=c_white, text_size=tableTextSize)
+table.cell(t, 8, obv_tot_row, "",                        bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 9, obv_tot_row, "│",                       bgcolor=c_spacer, text_color=c_gray,      text_size=tableTextSize)
+table.cell(t,10, obv_tot_row, "2nd Cdl",                 bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t,11, obv_tot_row, "CE:",                     bgcolor=c_obvBg, text_color=c_white,      text_size=tableTextSize)
+table.cell(t,12, obv_tot_row, str.tostring(ce_obv_2nd_candle/1000,"#.0")+"K", bgcolor=c_obvBg, text_color=c_white, text_size=tableTextSize)
+table.cell(t,13, obv_tot_row, "PE:"+str.tostring(pe_obv_2nd_candle/1000,"#.0")+"K", bgcolor=c_obvBg, text_color=c_white, text_size=tableTextSize)
 
 // Hide full table when toggle is OFF
 if barstate.islast and not showTable
-    for r = 0 to 18
+    for r = 0 to 17
         for c = 0 to 13
             table.cell(t, c, r, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.black, 100), text_size=size.tiny)
 
 // ================= CANDLE COLORING =================
-int ce_buy_count  = (ce_otm2_cu ? 1 : 0) + (ce_otm1_cu ? 1 : 0) + (ce_atm_cu ? 1 : 0) + (ce_itm1_cu ? 1 : 0) + (ce_itm2_cu ? 1 : 0) + (ce_otm3_cu ? 1 : 0) + (ce_itm3_cu ? 1 : 0)
+int ce_buy_count = (ce_otm2_cu ? 1 : 0) + (ce_otm1_cu ? 1 : 0) + (ce_atm_cu ? 1 : 0) + (ce_itm1_cu ? 1 : 0) + (ce_itm2_cu ? 1 : 0) + (ce_otm3_cu ? 1 : 0) + (ce_itm3_cu ? 1 : 0)
 int pe_sell_count = (pe_otm2_cd ? 1 : 0) + (pe_otm1_cd ? 1 : 0) + (pe_atm_cd ? 1 : 0) + (pe_itm1_cd ? 1 : 0) + (pe_itm2_cd ? 1 : 0) + (pe_otm3_cd ? 1 : 0) + (pe_itm3_cd ? 1 : 0)
-int pe_buy_count  = (pe_otm2_cu ? 1 : 0) + (pe_otm1_cu ? 1 : 0) + (pe_atm_cu ? 1 : 0) + (pe_itm1_cu ? 1 : 0) + (pe_itm2_cu ? 1 : 0) + (pe_otm3_cu ? 1 : 0) + (pe_itm3_cu ? 1 : 0)
+int pe_buy_count = (pe_otm2_cu ? 1 : 0) + (pe_otm1_cu ? 1 : 0) + (pe_atm_cu ? 1 : 0) + (pe_itm1_cu ? 1 : 0) + (pe_itm2_cu ? 1 : 0) + (pe_otm3_cu ? 1 : 0) + (pe_itm3_cu ? 1 : 0)
 int ce_sell_count = (ce_otm2_cd ? 1 : 0) + (ce_otm1_cd ? 1 : 0) + (ce_atm_cd ? 1 : 0) + (ce_itm1_cd ? 1 : 0) + (ce_itm2_cd ? 1 : 0) + (ce_otm3_cd ? 1 : 0) + (ce_itm3_cd ? 1 : 0)
 
 color candle_color = na
@@ -637,10 +585,17 @@ var int down_lvl      = 0
 float y_step = nz(ta.atr(14)) * (spacerMult * 0.2)
 
 // ── JSON alert helper ──
+//f_json(txt) =>
+//    sanitized = str.replace_all(txt, "\n", "\\n")
+//    sanitized := str.replace_all(sanitized, '"', '\\"')
+//    '{"chat_id":"-1003533948678","text":"' + sanitized + ' | TF: ' + timeframe.period + '"}'
+// ── JSON alert helper ──
 f_json(txt) =>
+    stage = str.contains(txt, "PRE ALERT") ? "pre_alert" : str.contains(txt, "CONFIRMED") ? "confirmed" : "event"
     sanitized = str.replace_all(txt, "\n", "\\n")
     sanitized := str.replace_all(sanitized, '"', '\\"')
-    '{"chat_id":"-1003533948678","text":"' + sanitized + ' | TF: ' + timeframe.period + '"}'
+    payloadText = sanitized + ' | TF: ' + timeframe.period
+    '{"source":"tradingview","chat_id":"-1003533948678","stage":"' + stage + '","text":"' + payloadText + '","message":"' + payloadText + '","timeframe":"' + timeframe.period + '","timestamp":"' + str.tostring(time) + '"}'
 
 // ── SPOT context line ──
 spot_line = indexName + " SPOT:" + str.tostring(n_close,"#.0") + " TF:" + timeframe.period + " " + n_vwap_pos + " " + n_ema50_pos + " RSI:" + str.tostring(n_rsi,"#.0") + " Trend:" + n_trend + " Signal:" + n_signal
@@ -659,8 +614,11 @@ if barstate.isconfirmed and n_st_flip
     alert(f_json(_st_msg + "\n" + spot_line), alert.freq_once_per_bar_close)
 
 if barstate.isconfirmed and obv_status_changed
-    _obv_msg = "OBV STATUS CHANGE | " + indexName + " " + timeframe.period + "\nCALL OBV: " + ce_dir_arrow + " | Day%: " + str.tostring(ce_obv_day_pct, "#.0") + "%\nPUT OBV: " + pe_dir_arrow + " | Day%: " + str.tostring(pe_obv_day_pct, "#.0") + "%\nBias: " + obv_bias_lbl
+    _obv_msg = "OBV STATUS CHANGE | " + indexName + " " + timeframe.period + "\nCALL OBV: " + ce_dir_arrow + " | Day%: " + str.tostring(ce_obv_day_pct, "#.00") + "%\nPUT OBV: " + pe_dir_arrow + " | Day%: " + str.tostring(pe_obv_day_pct, "#.00") + "%\nBias: " + obv_bias_lbl
     alert(f_json(_obv_msg + "\n" + spot_line), alert.freq_once_per_bar_close)
+
+//if barstate.isconfirmed and autoATM and needsRefresh and barsSinceATMShift == 0
+    //alert(f_json("ATM DRIFT WARNING\nLive ATM has shifted — update ATM Strike input and re-add indicator\n" + spot_line), alert.freq_once_per_bar_close)
 
 // ── CE BUY labels ──
 string cb_txt = ""
@@ -831,3 +789,5 @@ if pe_atm_cd
 if ps_txt != "" and showSignalTags
     float plot_y = high + (y_step * down_lvl)
     label.new(bar_index, plot_y, text=ps_txt, style=label.style_label_down, color=color.new(#ad1457, 0), textcolor=color.white, size=size.tiny)
+
+    
