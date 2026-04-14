@@ -586,9 +586,11 @@ float y_step = nz(ta.atr(14)) * (spacerMult * 0.2)
 
 // ── JSON alert helper ──
 f_json(txt) =>
+    stage = str.contains(txt, "PRE ALERT") ? "pre_alert" : str.contains(txt, "CONFIRMED") ? "confirmed" : "event"
     sanitized = str.replace_all(txt, "\n", "\\n")
     sanitized := str.replace_all(sanitized, '"', '\\"')
-    '{"chat_id":"-1003533948678","text":"' + sanitized + ' | TF: ' + timeframe.period + '"}'
+    payloadText = sanitized + ' | TF: ' + timeframe.period
+    '{"source":"tradingview","chat_id":"-1003533948678","stage":"' + stage + '","text":"' + payloadText + '","message":"' + payloadText + '","timeframe":"' + timeframe.period + '","timestamp":"' + str.tostring(time) + '"}'
 
 // ── SPOT context line ──
 spot_line = indexName + " SPOT:" + str.tostring(n_close,"#.0") + " TF:" + timeframe.period + " " + n_vwap_pos + " " + n_ema50_pos + " RSI:" + str.tostring(n_rsi,"#.0") + " Trend:" + n_trend + " Signal:" + n_signal
