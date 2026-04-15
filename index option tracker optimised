@@ -1,5 +1,5 @@
 //@version=5
-indicator("Dynamic NIFTY Options Dashboard (5 Levels) + SPOT MACD", overlay=true)
+indicator("Dynamic NIFTY Options Dashboard (5 Levels) + SPOT MACD + OBV Bias", overlay=true)
 
 // ================= INPUT =================
 atm   = input.int(23500, "ATM Strike")
@@ -15,17 +15,25 @@ tableTextSize = tableTextSizeStr == "auto" ? size.auto : tableTextSizeStr == "ti
 // ── Label spacing multiplier ──
 spacerMult = input.float(3.0, "Label Spacing Multiplier", minval=1.0, maxval=10.0, step=0.5)
 
-// ── Expiry day toggle ──
-isExpiry = input.bool(false, "Expiry Day (adds ITM3 + OTM3)")
-
 // ── SPOT MACD toggle (default OFF) ──
 showMacd = input.bool(false, "Show SPOT MACD Columns")
 
 // ── Auto-ATM from SPOT ──
-autoATM       = input.bool(true, "Auto ATM from SPOT", tooltip="When ON, ATM is recalculated from NIFTY SPOT every bar. The ATM row highlight shifts dynamically.")
-refreshWarnPts = input.int(100, "Refresh Warning (pts drift)", minval=50, step=50, tooltip="Show refresh banner when live ATM drifts this many points from configured ATM")
+autoATM        = input.bool(true, "Auto ATM from SPOT", tooltip="When ON, ATM is recalculated from NIFTY SPOT every bar.")
+refreshWarnPts = input.int(100, "Refresh Warning (pts drift)", minval=50, step=50)
 
-// ================= NIFTY SPOT (moved up for auto-ATM calc) =================
+// ── OBV Settings ──
+showOBVLines  = input.bool(true,  "Show OBV Lines on Chart")
+obvEmaLen     = input.int(9,      "OBV EMA Length", minval=2, maxval=50)
+obvThreshPct  = input.float(1.0,  "OBV Trend Threshold %", minval=0.1, maxval=10.0, step=0.1,
+                 tooltip="% change in smoothed OBV to classify as Increasing/Decreasing vs Stable")
+stFactor      = input.float(3.0,  "SPOT Supertrend Factor", minval=0.5, step=0.5)
+stAtrLen      = input.int(10,     "SPOT Supertrend ATR Length", minval=2, maxval=100)
+showST        = input.bool(true,  "Show SPOT Supertrend on Chart")
+showSignalTags = input.bool(true, "Show Buy/Sell Signal Tags on Chart")
+showTable       = input.bool(true, "Show Dashboard Table")
+
+// ================= NIFTY SPOT =================
 n_close = request.security(niftySymbol, timeframe.period, close)
 n_ema9  = ta.ema(n_close, 9)
 n_ema26 = ta.ema(n_close, 26)
@@ -41,24 +49,34 @@ n_signal    = n_barsUp == 1 ? "BUY" : n_barsDown == 1 ? "SELL" : "WAIT"
 n_vwap_pos  = n_close > n_vwap  ? "▲VWAP" : "▼VWAP"
 n_ema50_pos = n_close > n_ema50 ? "▲E50"  : "▼E50"
 
-// ── SPOT MACD (Fast=12, Slow=26, Signal=9) ──
+// ── SPOT MACD ──
 n_fast_ma  = ta.ema(n_close, 12)
 n_slow_ma  = ta.ema(n_close, 26)
 n_macd     = n_fast_ma - n_slow_ma
 n_macd_sig = ta.ema(n_macd, 9)
 n_hist     = n_macd - n_macd_sig
 
-// ================= AUTO-ATM CALCULATION =================
+// ── SPOT Supertrend ──
+[n_st, n_st_dir] = ta.supertrend(stFactor, stAtrLen)
+n_st_flip = ta.change(n_st_dir) != 0
+n_st_trend = n_st_dir < 0 ? "BULL" : "BEAR"
+
+// ── Plot Supertrend ──
+stColor = n_st_dir < 0 ? color.new(color.lime, 0) : color.new(color.red, 0)
+plot(showST ? n_st : na, title="SPOT Supertrend", color=stColor, linewidth=2, style=plot.style_line)
+
+// ── SPOT ATR ──
+n_atr = ta.atr(14)
+
+// ================= AUTO-ATM =================
 liveATM  = math.round(n_close / step) * step
 useATM   = autoATM ? math.round(n_close / step) * step : atm
 atmDrift = math.abs(liveATM - atm)
 needsRefresh = atmDrift >= refreshWarnPts
 
-// ── Sliding window shift (±1 step max) ──
 rawShift = math.round((liveATM - atm) / step)
 shift    = autoATM ? math.max(-1, math.min(1, rawShift)) : 0
 
-// ── Track last ATM change time ──
 var int   lastATMChangeBar  = 0
 var float prevLiveATM       = na
 if na(prevLiveATM) or liveATM != prevLiveATM
@@ -80,7 +98,6 @@ pe_atm  = atm
 pe_otm1 = atm - step
 pe_otm2 = atm - (2 * step)
 
-// ── Extra expiry strikes ──
 ce_itm3 = atm - (3 * step)
 ce_otm3 = atm + (3 * step)
 pe_itm3 = atm + (3 * step)
@@ -103,7 +120,7 @@ f_rsi_color(rsi) =>
         c := color.lime
     c
 
-// ================= MACD HELPERS (SPOT only) =================
+// ================= MACD HELPERS =================
 f_macd_info(hist, macd_line, signal_line) =>
     cross_lbl = macd_line > signal_line ? "▲BULL" : macd_line < signal_line ? "▼BEAR" : "─FLAT"
     hist_sign = hist > 0.5 ? "+" : hist < -0.5 ? "-" : "~"
@@ -122,10 +139,11 @@ f_hist_sign_color(sign) =>
 f_strength_color(cross_lbl) =>
     str.contains(cross_lbl, "▲") ? color.new(color.lime, 30) : str.contains(cross_lbl, "▼") ? color.new(color.red, 30) : color.new(color.gray, 30)
 
-// ================= SIGNAL =================
+// ================= SIGNAL (with OBV export) =================
 f_signal(sym) =>
-    c = request.security(sym, timeframe.period, close)
+    [c, v] = request.security(sym, timeframe.period, [close, volume])
     ema9  = ta.ema(c, 9)
+    obv_raw = ta.cum(math.sign(ta.change(c)) * v)
     ema26 = ta.ema(c, 26)
     ema50 = ta.ema(c, 50)
     rsi   = ta.rsi(c, 14)
@@ -138,26 +156,153 @@ f_signal(sym) =>
     signal = barsUp == 1 ? "BUY" : barsDown == 1 ? "SELL" : "WAIT"
     vwap_pos  = c > vwap  ? "▲VWAP" : "▼VWAP"
     ema50_pos = c > ema50 ? "▲E50"  : "▼E50"
-    [trend, signal, c, rsi, vwap_pos, ema50_pos, crossUp, crossDown, barsUp, barsDown]
+    [trend, signal, c, rsi, vwap_pos, ema50_pos, crossUp, crossDown, barsUp, barsDown, obv_raw]
 
 // ================= FETCH ALL OPTIONS =================
-[ce_itm2_t, ce_itm2_s, ce_itm2_p, ce_itm2_r, ce_itm2_v, ce_itm2_e, ce_itm2_cu, ce_itm2_cd, ce_itm2_bu, ce_itm2_bd] = f_signal(f_sym(ce_itm2, "C"))
-[ce_itm1_t, ce_itm1_s, ce_itm1_p, ce_itm1_r, ce_itm1_v, ce_itm1_e, ce_itm1_cu, ce_itm1_cd, ce_itm1_bu, ce_itm1_bd] = f_signal(f_sym(ce_itm1, "C"))
-[ce_atm_t , ce_atm_s , ce_atm_p , ce_atm_r , ce_atm_v , ce_atm_e , ce_atm_cu , ce_atm_cd , ce_atm_bu , ce_atm_bd ] = f_signal(f_sym(ce_atm,  "C"))
-[ce_otm1_t, ce_otm1_s, ce_otm1_p, ce_otm1_r, ce_otm1_v, ce_otm1_e, ce_otm1_cu, ce_otm1_cd, ce_otm1_bu, ce_otm1_bd] = f_signal(f_sym(ce_otm1, "C"))
-[ce_otm2_t, ce_otm2_s, ce_otm2_p, ce_otm2_r, ce_otm2_v, ce_otm2_e, ce_otm2_cu, ce_otm2_cd, ce_otm2_bu, ce_otm2_bd] = f_signal(f_sym(ce_otm2, "C"))
+[ce_itm2_t, ce_itm2_s, ce_itm2_p, ce_itm2_r, ce_itm2_v, ce_itm2_e, ce_itm2_cu, ce_itm2_cd, ce_itm2_bu, ce_itm2_bd, ce_itm2_obv] = f_signal(f_sym(ce_itm2, "C"))
+[ce_itm1_t, ce_itm1_s, ce_itm1_p, ce_itm1_r, ce_itm1_v, ce_itm1_e, ce_itm1_cu, ce_itm1_cd, ce_itm1_bu, ce_itm1_bd, ce_itm1_obv] = f_signal(f_sym(ce_itm1, "C"))
+[ce_atm_t , ce_atm_s , ce_atm_p , ce_atm_r , ce_atm_v , ce_atm_e , ce_atm_cu , ce_atm_cd , ce_atm_bu , ce_atm_bd , ce_atm_obv ] = f_signal(f_sym(ce_atm,  "C"))
+[ce_otm1_t, ce_otm1_s, ce_otm1_p, ce_otm1_r, ce_otm1_v, ce_otm1_e, ce_otm1_cu, ce_otm1_cd, ce_otm1_bu, ce_otm1_bd, ce_otm1_obv] = f_signal(f_sym(ce_otm1, "C"))
+[ce_otm2_t, ce_otm2_s, ce_otm2_p, ce_otm2_r, ce_otm2_v, ce_otm2_e, ce_otm2_cu, ce_otm2_cd, ce_otm2_bu, ce_otm2_bd, ce_otm2_obv] = f_signal(f_sym(ce_otm2, "C"))
 
-[pe_itm2_t, pe_itm2_s, pe_itm2_p, pe_itm2_r, pe_itm2_v, pe_itm2_e, pe_itm2_cu, pe_itm2_cd, pe_itm2_bu, pe_itm2_bd] = f_signal(f_sym(pe_itm2, "P"))
-[pe_itm1_t, pe_itm1_s, pe_itm1_p, pe_itm1_r, pe_itm1_v, pe_itm1_e, pe_itm1_cu, pe_itm1_cd, pe_itm1_bu, pe_itm1_bd] = f_signal(f_sym(pe_itm1, "P"))
-[pe_atm_t , pe_atm_s , pe_atm_p , pe_atm_r , pe_atm_v , pe_atm_e , pe_atm_cu , pe_atm_cd , pe_atm_bu , pe_atm_bd ] = f_signal(f_sym(pe_atm,  "P"))
-[pe_otm1_t, pe_otm1_s, pe_otm1_p, pe_otm1_r, pe_otm1_v, pe_otm1_e, pe_otm1_cu, pe_otm1_cd, pe_otm1_bu, pe_otm1_bd] = f_signal(f_sym(pe_otm1, "P"))
-[pe_otm2_t, pe_otm2_s, pe_otm2_p, pe_otm2_r, pe_otm2_v, pe_otm2_e, pe_otm2_cu, pe_otm2_cd, pe_otm2_bu, pe_otm2_bd] = f_signal(f_sym(pe_otm2, "P"))
+[pe_itm2_t, pe_itm2_s, pe_itm2_p, pe_itm2_r, pe_itm2_v, pe_itm2_e, pe_itm2_cu, pe_itm2_cd, pe_itm2_bu, pe_itm2_bd, pe_itm2_obv] = f_signal(f_sym(pe_itm2, "P"))
+[pe_itm1_t, pe_itm1_s, pe_itm1_p, pe_itm1_r, pe_itm1_v, pe_itm1_e, pe_itm1_cu, pe_itm1_cd, pe_itm1_bu, pe_itm1_bd, pe_itm1_obv] = f_signal(f_sym(pe_itm1, "P"))
+[pe_atm_t , pe_atm_s , pe_atm_p , pe_atm_r , pe_atm_v , pe_atm_e , pe_atm_cu , pe_atm_cd , pe_atm_bu , pe_atm_bd , pe_atm_obv ] = f_signal(f_sym(pe_atm,  "P"))
+[pe_otm1_t, pe_otm1_s, pe_otm1_p, pe_otm1_r, pe_otm1_v, pe_otm1_e, pe_otm1_cu, pe_otm1_cd, pe_otm1_bu, pe_otm1_bd, pe_otm1_obv] = f_signal(f_sym(pe_otm1, "P"))
+[pe_otm2_t, pe_otm2_s, pe_otm2_p, pe_otm2_r, pe_otm2_v, pe_otm2_e, pe_otm2_cu, pe_otm2_cd, pe_otm2_bu, pe_otm2_bd, pe_otm2_obv] = f_signal(f_sym(pe_otm2, "P"))
 
-// ── Extra expiry fetches ──
-[ce_itm3_t, ce_itm3_s, ce_itm3_p, ce_itm3_r, ce_itm3_v, ce_itm3_e, ce_itm3_cu, ce_itm3_cd, ce_itm3_bu, ce_itm3_bd] = f_signal(f_sym(ce_itm3, "C"))
-[ce_otm3_t, ce_otm3_s, ce_otm3_p, ce_otm3_r, ce_otm3_v, ce_otm3_e, ce_otm3_cu, ce_otm3_cd, ce_otm3_bu, ce_otm3_bd] = f_signal(f_sym(ce_otm3, "C"))
-[pe_itm3_t, pe_itm3_s, pe_itm3_p, pe_itm3_r, pe_itm3_v, pe_itm3_e, pe_itm3_cu, pe_itm3_cd, pe_itm3_bu, pe_itm3_bd] = f_signal(f_sym(pe_itm3, "P"))
-[pe_otm3_t, pe_otm3_s, pe_otm3_p, pe_otm3_r, pe_otm3_v, pe_otm3_e, pe_otm3_cu, pe_otm3_cd, pe_otm3_bu, pe_otm3_bd] = f_signal(f_sym(pe_otm3, "P"))
+[ce_itm3_t, ce_itm3_s, ce_itm3_p, ce_itm3_r, ce_itm3_v, ce_itm3_e, ce_itm3_cu, ce_itm3_cd, ce_itm3_bu, ce_itm3_bd, ce_itm3_obv] = f_signal(f_sym(ce_itm3, "C"))
+[ce_otm3_t, ce_otm3_s, ce_otm3_p, ce_otm3_r, ce_otm3_v, ce_otm3_e, ce_otm3_cu, ce_otm3_cd, ce_otm3_bu, ce_otm3_bd, ce_otm3_obv] = f_signal(f_sym(ce_otm3, "C"))
+[pe_itm3_t, pe_itm3_s, pe_itm3_p, pe_itm3_r, pe_itm3_v, pe_itm3_e, pe_itm3_cu, pe_itm3_cd, pe_itm3_bu, pe_itm3_bd, pe_itm3_obv] = f_signal(f_sym(pe_itm3, "P"))
+[pe_otm3_t, pe_otm3_s, pe_otm3_p, pe_otm3_r, pe_otm3_v, pe_otm3_e, pe_otm3_cu, pe_otm3_cd, pe_otm3_bu, pe_otm3_bd, pe_otm3_obv] = f_signal(f_sym(pe_otm3, "P"))
+
+// ================= OBV — DAY RESET + AGGREGATE =================
+// Detect start of new trading day
+isNewDay  = ta.change(time("D")) != 0
+isDayStart = isNewDay or barstate.isfirst
+
+// ── FIX 1: raw_pe_obv was duplicating pe_itm3_obv — corrected to pe_otm3_obv ──
+raw_ce_obv = ce_itm2_obv + ce_itm1_obv + ce_atm_obv + ce_otm1_obv + ce_otm2_obv + ce_itm3_obv + ce_otm3_obv
+raw_pe_obv = pe_itm2_obv + pe_itm1_obv + pe_atm_obv + pe_otm1_obv + pe_otm2_obv + pe_itm3_obv + pe_otm3_obv  // FIXED: was pe_itm3_obv twice
+
+// ── Capture 1st candle aggregate OBV as the fixed daily base ──
+// ce_obv_base  = raw aggregate OBV locked at the 1st candle of each day (never changes during day)
+// ce_obv_day   = raw_ce_obv - base  = pure intraday delta (0 at open, grows +/- through day)
+// ce_obv_day_pct = ce_obv_day / abs(base) * 100  = % move from 1st candle level
+//   → starts at 0% each morning, shows exactly how much CE/PE aggregate OBV has moved
+
+var float ce_obv_base   = na
+var float pe_obv_base   = na
+var float ce_obv_daystart = na  // alias kept for table footer display
+var float pe_obv_daystart = na
+var int   barsSinceDayStart = 0
+
+var float ce_obv_2nd = na   // aggregate OBV at close of 2nd candle (day-adjusted delta)
+var float pe_obv_2nd = na
+
+if isDayStart
+    barsSinceDayStart := 0
+    ce_obv_base       := raw_ce_obv   // lock 1st candle as base
+    pe_obv_base       := raw_pe_obv
+    ce_obv_daystart   := raw_ce_obv
+    pe_obv_daystart   := raw_pe_obv
+    ce_obv_2nd        := na
+    pe_obv_2nd        := na
+else
+    barsSinceDayStart += 1
+
+// ── Intraday delta from 1st candle base ──
+ce_obv_day = raw_ce_obv - nz(ce_obv_base, raw_ce_obv)
+pe_obv_day = raw_pe_obv - nz(pe_obv_base, raw_pe_obv)
+
+// Capture 2nd candle intraday delta (barsSinceDayStart == 1 = second bar of the day)
+if barsSinceDayStart == 1 and na(ce_obv_2nd)
+    ce_obv_2nd := ce_obv_day
+if barsSinceDayStart == 1 and na(pe_obv_2nd)
+    pe_obv_2nd := pe_obv_day
+
+// ── % change from 1st candle base (fixed denominator, never rolling) ──
+// At 9:15 bar: 0%  |  Grows cleanly +/- through the day
+ce_obv_day_pct = math.abs(nz(ce_obv_base, 0)) > 0 ?
+                 (ce_obv_day / math.abs(ce_obv_base)) * 100 : 0.0
+
+pe_obv_day_pct = math.abs(nz(pe_obv_base, 0)) > 0 ?
+                 (pe_obv_day / math.abs(pe_obv_base)) * 100 : 0.0
+
+// ── Smooth intraday delta with EMA for chart lines and direction classification ──
+ce_obv_ema = ta.ema(ce_obv_day, obvEmaLen)
+pe_obv_ema = ta.ema(pe_obv_day, obvEmaLen)
+
+// ── Trend classification: bar-over-bar % change of smoothed OBV ──
+ce_obv_chg_pct = na(ce_obv_ema[1]) or ce_obv_ema[1] == 0 ? 0.0 :
+                 (ce_obv_ema - ce_obv_ema[1]) / math.abs(ce_obv_ema[1]) * 100
+
+pe_obv_chg_pct = na(pe_obv_ema[1]) or pe_obv_ema[1] == 0 ? 0.0 :
+                 (pe_obv_ema - pe_obv_ema[1]) / math.abs(pe_obv_ema[1]) * 100
+
+// 1 = Increasing, 0 = Stable, -1 = Decreasing
+ce_obv_dir = ce_obv_chg_pct >  obvThreshPct ? 1 : ce_obv_chg_pct < -obvThreshPct ? -1 : 0
+pe_obv_dir = pe_obv_chg_pct >  obvThreshPct ? 1 : pe_obv_chg_pct < -obvThreshPct ? -1 : 0
+
+// ── OBV Bias Truth Table ──
+f_obv_bias(ce_dir, pe_dir) =>
+    string lbl   = ""
+    string emoji = ""
+    color  clr   = color.gray
+    if ce_dir == 1 and pe_dir == -1
+        lbl   := "Strong Bullish"
+        emoji := "🚀"
+        clr   := color.new(#00c853, 0)
+    else if ce_dir == 1 and pe_dir == 0
+        lbl   := "Bullish"
+        emoji := "🟢"
+        clr   := color.new(color.lime, 0)
+    else if ce_dir == 1 and pe_dir == 1
+        lbl   := "Volatility/Breakout"
+        emoji := "⚡"
+        clr   := color.new(color.yellow, 0)
+    else if ce_dir == 0 and pe_dir == -1
+        lbl   := "Mild Bullish"
+        emoji := "🔼"
+        clr   := color.new(#80cbc4, 0)
+    else if ce_dir == 0 and pe_dir == 0
+        lbl   := "Sideways"
+        emoji := "↔"
+        clr   := color.new(color.gray, 0)
+    else if ce_dir == 0 and pe_dir == 1
+        lbl   := "Mild Bearish"
+        emoji := "🔽"
+        clr   := color.new(#ff8a65, 0)
+    else if ce_dir == -1 and pe_dir == 1
+        lbl   := "Strong Bearish"
+        emoji := "🔻"
+        clr   := color.new(#d50000, 0)
+    else if ce_dir == -1 and pe_dir == 0
+        lbl   := "Bearish"
+        emoji := "🔴"
+        clr   := color.new(color.red, 0)
+    else if ce_dir == -1 and pe_dir == -1
+        lbl   := "Low Volatility"
+        emoji := "💤"
+        clr   := color.new(color.silver, 0)
+    [lbl, emoji, clr]
+
+[obv_bias_lbl, obv_bias_emoji, obv_bias_clr] = f_obv_bias(ce_obv_dir, pe_obv_dir)
+
+// ── Direction arrow labels ──
+ce_dir_arrow = ce_obv_dir == 1 ? "⬆" : ce_obv_dir == -1 ? "⬇" : "➖"
+pe_dir_arrow = pe_obv_dir == 1 ? "⬆" : pe_obv_dir == -1 ? "⬇" : "➖"
+
+// ── OBV Line Colors ──
+ce_obv_line_clr = ce_obv_dir == 1 ? color.new(color.lime, 0) : ce_obv_dir == -1 ? color.new(color.red, 0) : color.new(color.gray, 30)
+pe_obv_line_clr = pe_obv_dir == 1 ? color.new(#ff5252, 0)   : pe_obv_dir == -1 ? color.new(#7c4dff, 0)  : color.new(color.gray, 30)
+
+// ── Plot OBV EMA lines on chart ──
+plot(showOBVLines ? ce_obv_ema : na, title="CE Aggregate OBV EMA", color=ce_obv_line_clr, linewidth=2, style=plot.style_line)
+plot(showOBVLines ? pe_obv_ema : na, title="PE Aggregate OBV EMA", color=pe_obv_line_clr, linewidth=2, style=plot.style_line)
+
+// ── Zero reference line for OBV ──
+hline(0, "OBV Zero", color=color.new(color.gray, 70), linestyle=hline.style_dotted, linewidth=1)
 
 // ================= COLOR HELPERS =================
 c_bull    = color.new(color.lime,   0)
@@ -178,6 +323,8 @@ c_macdHdr = color.new(#1b5e20,      0)
 c_refresh = color.new(#ff6f00,      0)
 c_autoOn  = color.new(#00c853,      0)
 c_autoBg  = color.new(#1b3a1b,      0)
+c_obvHdr  = color.new(#1a237e,      0)
+c_obvBg   = color.new(#0d0d1f,      0)
 
 sig_color(s) =>
     s == "BUY" ? c_buy : s == "SELL" ? c_sell : c_wait
@@ -188,14 +335,15 @@ trend_color(tr) =>
 pos_color(p) =>
     str.contains(p, "▲") ? c_bull : c_bear
 
-// ================= AUTO-ATM HIGHLIGHT LOGIC =================
+// ================= AUTO-ATM HIGHLIGHT =================
 f_isLiveATM(strikeVal) =>
     autoATM and strikeVal == liveATM
 
 // ================= TABLE =================
-var table t = table.new(position.bottom_right, 14, 14, border_color=color.new(color.gray,60),frame_width=2,  frame_color=color.new(color.gray,40))
+var table t = table.new(position.bottom_right, 14, 19, border_color=color.new(color.gray,60), frame_width=2, frame_color=color.new(color.gray,40))
 
-if barstate.isfirst
+if barstate.islast and showTable
+    // Header row
     table.cell(t, 0, 0, "Signal",  bgcolor=c_ceHdr, text_color=c_white, text_size=tableTextSize)
     table.cell(t, 1, 0, "Trend",   bgcolor=c_ceHdr, text_color=c_white, text_size=tableTextSize)
     table.cell(t, 2, 0, "RSI",     bgcolor=c_ceHdr, text_color=c_white, text_size=tableTextSize)
@@ -212,8 +360,8 @@ if barstate.isfirst
         table.cell(t,12, 0, "H±",        bgcolor=c_macdHdr, text_color=c_white, text_size=tableTextSize)
         table.cell(t,13, 0, "Str",        bgcolor=c_macdHdr, text_color=c_white, text_size=tableTextSize)
 
-// ── Row render function with dynamic ATM highlight ──
-f_row(row, strike_val, isATM,ce_sig, ce_tr, ce_rsi, ce_vp, ce_ep, ce_pr,pe_sig, pe_tr, pe_rsi, pe_vp, pe_ep, pe_pr) =>
+// ── Row render function ──
+f_row(row, strike_val, isATM, ce_sig, ce_tr, ce_rsi, ce_vp, ce_ep, ce_pr, pe_sig, pe_tr, pe_rsi, pe_vp, pe_ep, pe_pr) =>
     dynATM  = autoATM ? f_isLiveATM(strike_val) : isATM
     bg      = dynATM ? c_atmRow : c_dark
     stk_lbl = dynATM ? "►" + str.tostring(strike_val) + "◄" : str.tostring(strike_val)
@@ -236,40 +384,26 @@ f_row(row, strike_val, isATM,ce_sig, ce_tr, ce_rsi, ce_vp, ce_ep, ce_pr,pe_sig, 
         table.cell(t,12, row, "", bgcolor=c_dark, text_color=c_gray, text_size=tableTextSize)
         table.cell(t,13, row, "", bgcolor=c_dark, text_color=c_gray, text_size=tableTextSize)
 
-// ── Populate strike rows (sliding window for non-expiry) ──
-if isExpiry
-    f_row(1, ce_itm3, liveATM == ce_itm3, ce_itm3_s, ce_itm3_t, ce_itm3_r, ce_itm3_v, ce_itm3_e, ce_itm3_p, pe_otm3_s, pe_otm3_t, pe_otm3_r, pe_otm3_v, pe_otm3_e, pe_otm3_p)
-    f_row(2, ce_itm2, liveATM == ce_itm2, ce_itm2_s, ce_itm2_t, ce_itm2_r, ce_itm2_v, ce_itm2_e, ce_itm2_p, pe_otm2_s, pe_otm2_t, pe_otm2_r, pe_otm2_v, pe_otm2_e, pe_otm2_p)
-    f_row(3, ce_itm1, liveATM == ce_itm1, ce_itm1_s, ce_itm1_t, ce_itm1_r, ce_itm1_v, ce_itm1_e, ce_itm1_p, pe_otm1_s, pe_otm1_t, pe_otm1_r, pe_otm1_v, pe_otm1_e, pe_otm1_p)
-    f_row(4, ce_atm,  liveATM == ce_atm or not autoATM, ce_atm_s, ce_atm_t, ce_atm_r, ce_atm_v, ce_atm_e, ce_atm_p, pe_atm_s, pe_atm_t, pe_atm_r, pe_atm_v, pe_atm_e, pe_atm_p)
-    f_row(5, ce_otm1, liveATM == ce_otm1, ce_otm1_s, ce_otm1_t, ce_otm1_r, ce_otm1_v, ce_otm1_e, ce_otm1_p, pe_itm1_s, pe_itm1_t, pe_itm1_r, pe_itm1_v, pe_itm1_e, pe_itm1_p)
-    f_row(6, ce_otm2, liveATM == ce_otm2, ce_otm2_s, ce_otm2_t, ce_otm2_r, ce_otm2_v, ce_otm2_e, ce_otm2_p, pe_itm2_s, pe_itm2_t, pe_itm2_r, pe_itm2_v, pe_itm2_e, pe_itm2_p)
-    f_row(7, ce_otm3, liveATM == ce_otm3, ce_otm3_s, ce_otm3_t, ce_otm3_r, ce_otm3_v, ce_otm3_e, ce_otm3_p, pe_itm3_s, pe_itm3_t, pe_itm3_r, pe_itm3_v, pe_itm3_e, pe_itm3_p)
-else if shift == 1
-    f_row(1, ce_itm1, false, ce_itm1_s, ce_itm1_t, ce_itm1_r, ce_itm1_v, ce_itm1_e, ce_itm1_p, pe_otm1_s, pe_otm1_t, pe_otm1_r, pe_otm1_v, pe_otm1_e, pe_otm1_p)
-    f_row(2, ce_atm,  false, ce_atm_s,  ce_atm_t,  ce_atm_r,  ce_atm_v,  ce_atm_e,  ce_atm_p,  pe_atm_s,  pe_atm_t,  pe_atm_r,  pe_atm_v,  pe_atm_e,  pe_atm_p)
-    f_row(3, ce_otm1, true,  ce_otm1_s, ce_otm1_t, ce_otm1_r, ce_otm1_v, ce_otm1_e, ce_otm1_p, pe_itm1_s, pe_itm1_t, pe_itm1_r, pe_itm1_v, pe_itm1_e, pe_itm1_p)
-    f_row(4, ce_otm2, false, ce_otm2_s, ce_otm2_t, ce_otm2_r, ce_otm2_v, ce_otm2_e, ce_otm2_p, pe_itm2_s, pe_itm2_t, pe_itm2_r, pe_itm2_v, pe_itm2_e, pe_itm2_p)
-    f_row(5, ce_otm3, false, ce_otm3_s, ce_otm3_t, ce_otm3_r, ce_otm3_v, ce_otm3_e, ce_otm3_p, pe_itm3_s, pe_itm3_t, pe_itm3_r, pe_itm3_v, pe_itm3_e, pe_itm3_p)
-else if shift == -1
-    f_row(1, ce_itm3, false, ce_itm3_s, ce_itm3_t, ce_itm3_r, ce_itm3_v, ce_itm3_e, ce_itm3_p, pe_otm3_s, pe_otm3_t, pe_otm3_r, pe_otm3_v, pe_otm3_e, pe_otm3_p)
-    f_row(2, ce_itm2, false, ce_itm2_s, ce_itm2_t, ce_itm2_r, ce_itm2_v, ce_itm2_e, ce_itm2_p, pe_otm2_s, pe_otm2_t, pe_otm2_r, pe_otm2_v, pe_otm2_e, pe_otm2_p)
-    f_row(3, ce_itm1, true,  ce_itm1_s, ce_itm1_t, ce_itm1_r, ce_itm1_v, ce_itm1_e, ce_itm1_p, pe_otm1_s, pe_otm1_t, pe_otm1_r, pe_otm1_v, pe_otm1_e, pe_otm1_p)
-    f_row(4, ce_atm,  false, ce_atm_s,  ce_atm_t,  ce_atm_r,  ce_atm_v,  ce_atm_e,  ce_atm_p,  pe_atm_s,  pe_atm_t,  pe_atm_r,  pe_atm_v,  pe_atm_e,  pe_atm_p)
-    f_row(5, ce_otm1, false, ce_otm1_s, ce_otm1_t, ce_otm1_r, ce_otm1_v, ce_otm1_e, ce_otm1_p, pe_itm1_s, pe_itm1_t, pe_itm1_r, pe_itm1_v, pe_itm1_e, pe_itm1_p)
-else
-    f_row(1, ce_itm2, false, ce_itm2_s, ce_itm2_t, ce_itm2_r, ce_itm2_v, ce_itm2_e, ce_itm2_p, pe_otm2_s, pe_otm2_t, pe_otm2_r, pe_otm2_v, pe_otm2_e, pe_otm2_p)
-    f_row(2, ce_itm1, false, ce_itm1_s, ce_itm1_t, ce_itm1_r, ce_itm1_v, ce_itm1_e, ce_itm1_p, pe_otm1_s, pe_otm1_t, pe_otm1_r, pe_otm1_v, pe_otm1_e, pe_otm1_p)
-    f_row(3, ce_atm,  true,  ce_atm_s,  ce_atm_t,  ce_atm_r,  ce_atm_v,  ce_atm_e,  ce_atm_p,  pe_atm_s,  pe_atm_t,  pe_atm_r,  pe_atm_v,  pe_atm_e,  pe_atm_p)
-    f_row(4, ce_otm1, false, ce_otm1_s, ce_otm1_t, ce_otm1_r, ce_otm1_v, ce_otm1_e, ce_otm1_p, pe_itm1_s, pe_itm1_t, pe_itm1_r, pe_itm1_v, pe_itm1_e, pe_itm1_p)
-    f_row(5, ce_otm2, false, ce_otm2_s, ce_otm2_t, ce_otm2_r, ce_otm2_v, ce_otm2_e, ce_otm2_p, pe_itm2_s, pe_itm2_t, pe_itm2_r, pe_itm2_v, pe_itm2_e, pe_itm2_p)
+// ── Strike rows (7 levels always) ──
+f_row(1, ce_itm3, liveATM == ce_itm3, ce_itm3_s, ce_itm3_t, ce_itm3_r, ce_itm3_v, ce_itm3_e, ce_itm3_p, pe_otm3_s, pe_otm3_t, pe_otm3_r, pe_otm3_v, pe_otm3_e, pe_otm3_p)
+f_row(2, ce_itm2, liveATM == ce_itm2, ce_itm2_s, ce_itm2_t, ce_itm2_r, ce_itm2_v, ce_itm2_e, ce_itm2_p, pe_otm2_s, pe_otm2_t, pe_otm2_r, pe_otm2_v, pe_otm2_e, pe_otm2_p)
+f_row(3, ce_itm1, liveATM == ce_itm1, ce_itm1_s, ce_itm1_t, ce_itm1_r, ce_itm1_v, ce_itm1_e, ce_itm1_p, pe_otm1_s, pe_otm1_t, pe_otm1_r, pe_otm1_v, pe_otm1_e, pe_otm1_p)
+f_row(4, ce_atm,  liveATM == ce_atm or not autoATM, ce_atm_s, ce_atm_t, ce_atm_r, ce_atm_v, ce_atm_e, ce_atm_p, pe_atm_s, pe_atm_t, pe_atm_r, pe_atm_v, pe_atm_e, pe_atm_p)
+f_row(5, ce_otm1, liveATM == ce_otm1, ce_otm1_s, ce_otm1_t, ce_otm1_r, ce_otm1_v, ce_otm1_e, ce_otm1_p, pe_itm1_s, pe_itm1_t, pe_itm1_r, pe_itm1_v, pe_itm1_e, pe_itm1_p)
+f_row(6, ce_otm2, liveATM == ce_otm2, ce_otm2_s, ce_otm2_t, ce_otm2_r, ce_otm2_v, ce_otm2_e, ce_otm2_p, pe_itm2_s, pe_itm2_t, pe_itm2_r, pe_itm2_v, pe_itm2_e, pe_itm2_p)
+f_row(7, ce_otm3, liveATM == ce_otm3, ce_otm3_s, ce_otm3_t, ce_otm3_r, ce_otm3_v, ce_otm3_e, ce_otm3_p, pe_itm3_s, pe_itm3_t, pe_itm3_r, pe_itm3_v, pe_itm3_e, pe_itm3_p)
 
 // ── Dynamic row indices ──
-spacer_row   = isExpiry ? 8  : 6
-spot_hdr_row = isExpiry ? 9  : 7
-spot_dat_row = isExpiry ? 10 : 8
-atm_info_row = isExpiry ? 11 : 9
-refresh_row  = isExpiry ? 12 : 10
+spacer_row   = 8
+spot_hdr_row = 9
+spot_dat_row = 10
+atm_info_row = 11
+refresh_row  = 12
+obv_hdr_row  = 13
+obv_dat_row  = 14
+obv_int_row  = 15
+obv_tot_row  = 16
+obv_2nd_row  = 17
 
 // ── Spacer row ──
 for col = 0 to 13
@@ -309,7 +443,7 @@ if showMacd
     table.cell(t,12, spot_dat_row, n_hist_sign,  bgcolor=c_ydark, text_color=f_hist_sign_color(n_hist_sign),   text_size=tableTextSize)
     table.cell(t,13, spot_dat_row, n_strength,   bgcolor=c_ydark, text_color=f_strength_color(n_macd_cross),   text_size=tableTextSize)
 
-// ================= AUTO-ATM INFO ROW =================
+// ── Auto-ATM info row ──
 if autoATM
     atm_status = liveATM == atm ? "✓ ATM IN SYNC" : "⚡ Live ATM: " + str.tostring(liveATM, "#")
     atm_bg     = liveATM == atm ? c_autoBg : color.new(#4a3000, 0)
@@ -332,7 +466,7 @@ if autoATM
         table.cell(t,12, atm_info_row, "", bgcolor=atm_bg, text_color=c_gray, text_size=tableTextSize)
         table.cell(t,13, atm_info_row, "", bgcolor=atm_bg, text_color=c_gray, text_size=tableTextSize)
 
-// ================= REFRESH WARNING ROW =================
+// ── Refresh warning row ──
 if autoATM and needsRefresh
     table.cell(t, 0, refresh_row, "⚠ REFRESH NEEDED", bgcolor=c_refresh, text_color=c_dark, text_size=tableTextSize)
     table.cell(t, 1, refresh_row, "", bgcolor=c_refresh, text_color=c_dark, text_size=tableTextSize)
@@ -350,51 +484,141 @@ if autoATM and needsRefresh
         table.cell(t,12, refresh_row, "", bgcolor=c_refresh, text_color=c_dark, text_size=tableTextSize)
         table.cell(t,13, refresh_row, "", bgcolor=c_refresh, text_color=c_dark, text_size=tableTextSize)
 
-// ================= ALERTS =================
-alertcondition(n_crossUp,   "NIFTY BUY CROSS",  "NIFTY EMA9 crossed above EMA26 - BUY")
-alertcondition(n_crossDown, "NIFTY SELL CROSS",  "NIFTY EMA9 crossed below EMA26 - SELL")
+// ================= OBV SECTION IN TABLE =================
 
-alertcondition(ce_itm2_cu, "CE ITM2 BUY",  "CE ITM2 BUY CONFIRM")
-alertcondition(ce_itm2_cd, "CE ITM2 SELL", "CE ITM2 SELL CONFIRM")
-alertcondition(ce_itm1_cu, "CE ITM1 BUY",  "CE ITM1 BUY CONFIRM")
-alertcondition(ce_itm1_cd, "CE ITM1 SELL", "CE ITM1 SELL CONFIRM")
-alertcondition(ce_atm_cu,  "CE ATM BUY",   "CE ATM BUY CONFIRM")
-alertcondition(ce_atm_cd,  "CE ATM SELL",  "CE ATM SELL CONFIRM")
-alertcondition(ce_otm1_cu, "CE OTM1 BUY",  "CE OTM1 BUY CONFIRM")
-alertcondition(ce_otm1_cd, "CE OTM1 SELL", "CE OTM1 SELL CONFIRM")
-alertcondition(ce_otm2_cu, "CE OTM2 BUY",  "CE OTM2 BUY CONFIRM")
-alertcondition(ce_otm2_cd, "CE OTM2 SELL", "CE OTM2 SELL CONFIRM")
+// ── OBV Header row ──
+table.cell(t, 0, obv_hdr_row, "CALL OBV",   bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
+table.cell(t, 1, obv_hdr_row, "Dir",         bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
+table.cell(t, 2, obv_hdr_row, "EMA Val",     bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
+table.cell(t, 3, obv_hdr_row, "Day%",        bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
+table.cell(t, 4, obv_hdr_row, "│",           bgcolor=c_spacer, text_color=c_gray,   text_size=tableTextSize)
+table.cell(t, 5, obv_hdr_row, "PUT OBV",     bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
+table.cell(t, 6, obv_hdr_row, "Dir",         bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
+table.cell(t, 7, obv_hdr_row, "EMA Val",     bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
+table.cell(t, 8, obv_hdr_row, "Day%",        bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
+table.cell(t, 9, obv_hdr_row, "│",           bgcolor=c_spacer, text_color=c_gray,   text_size=tableTextSize)
+table.cell(t,10, obv_hdr_row, "BIAS",        bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
+table.cell(t,11, obv_hdr_row, "",            bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
+table.cell(t,12, obv_hdr_row, "",            bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
+table.cell(t,13, obv_hdr_row, "",            bgcolor=c_obvHdr, text_color=c_white,  text_size=tableTextSize)
 
-alertcondition(pe_itm2_cu, "PE ITM2 BUY",  "PE ITM2 BUY CONFIRM")
-alertcondition(pe_itm2_cd, "PE ITM2 SELL", "PE ITM2 SELL CONFIRM")
-alertcondition(pe_itm1_cu, "PE ITM1 BUY",  "PE ITM1 BUY CONFIRM")
-alertcondition(pe_itm1_cd, "PE ITM1 SELL", "PE ITM1 SELL CONFIRM")
-alertcondition(pe_atm_cu,  "PE ATM BUY",   "PE ATM BUY CONFIRM")
-alertcondition(pe_atm_cd,  "PE ATM SELL",  "PE ATM SELL CONFIRM")
-alertcondition(pe_otm1_cu, "PE OTM1 BUY",  "PE OTM1 BUY CONFIRM")
-alertcondition(pe_otm1_cd, "PE OTM1 SELL", "PE OTM1 SELL CONFIRM")
-alertcondition(pe_otm2_cu, "PE OTM2 BUY",  "PE OTM2 BUY CONFIRM")
-alertcondition(pe_otm2_cd, "PE OTM2 SELL", "PE OTM2 SELL CONFIRM")
+// ── OBV Data row ──
+ce_obv_dir_col = ce_obv_dir == 1 ? color.new(color.lime, 0) : ce_obv_dir == -1 ? color.new(color.red, 0) : color.new(color.gray, 0)
+pe_obv_dir_col = pe_obv_dir == 1 ? color.new(color.lime, 0) : pe_obv_dir == -1 ? color.new(color.red, 0) : color.new(color.gray, 0)
 
-alertcondition(n_crossUp   or ce_atm_cu or pe_atm_cu, "ANY BUY",  "Buy signal triggered")
-alertcondition(n_crossDown or ce_atm_cd or pe_atm_cd, "ANY SELL", "Sell signal triggered")
+// Day% color: positive = lime, negative = red, near-zero = gray
+ce_pct_col = ce_obv_day_pct > 10 ? color.new(color.lime, 0) : ce_obv_day_pct < -10 ? color.new(color.red, 0) : color.new(color.gray, 0)
+pe_pct_col = pe_obv_day_pct > 10 ? color.new(color.lime, 0) : pe_obv_day_pct < -10 ? color.new(color.red, 0) : color.new(color.gray, 0)
 
-alertcondition(ce_itm3_cu, "CE ITM3 BUY",  "CE ITM3 BUY CONFIRM")
-alertcondition(ce_itm3_cd, "CE ITM3 SELL", "CE ITM3 SELL CONFIRM")
-alertcondition(ce_otm3_cu, "CE OTM3 BUY",  "CE OTM3 BUY CONFIRM")
-alertcondition(ce_otm3_cd, "CE OTM3 SELL", "CE OTM3 SELL CONFIRM")
-alertcondition(pe_itm3_cu, "PE ITM3 BUY",  "PE ITM3 BUY CONFIRM")
-alertcondition(pe_itm3_cd, "PE ITM3 SELL", "PE ITM3 SELL CONFIRM")
-alertcondition(pe_otm3_cu, "PE OTM3 BUY",  "PE OTM3 BUY CONFIRM")
-alertcondition(pe_otm3_cd, "PE OTM3 SELL", "PE OTM3 SELL CONFIRM")
+table.cell(t, 0, obv_dat_row, "CE OBV",                                         bgcolor=c_obvBg, text_color=ce_obv_line_clr, text_size=tableTextSize)
+table.cell(t, 1, obv_dat_row, ce_dir_arrow,                                      bgcolor=c_obvBg, text_color=ce_obv_dir_col,  text_size=tableTextSize)
+table.cell(t, 2, obv_dat_row, str.tostring(ce_obv_ema / 1000, "#.0") + "K",     bgcolor=c_obvBg, text_color=c_white,          text_size=tableTextSize)
+table.cell(t, 3, obv_dat_row, str.tostring(ce_obv_day_pct, "#.0") + "%",        bgcolor=c_obvBg, text_color=ce_pct_col,       text_size=tableTextSize)
+table.cell(t, 4, obv_dat_row, "│",                                               bgcolor=c_spacer, text_color=c_gray,          text_size=tableTextSize)
+table.cell(t, 5, obv_dat_row, "PE OBV",                                         bgcolor=c_obvBg, text_color=pe_obv_line_clr, text_size=tableTextSize)
+table.cell(t, 6, obv_dat_row, pe_dir_arrow,                                      bgcolor=c_obvBg, text_color=pe_obv_dir_col,  text_size=tableTextSize)
+table.cell(t, 7, obv_dat_row, str.tostring(pe_obv_ema / 1000, "#.0") + "K",     bgcolor=c_obvBg, text_color=c_white,          text_size=tableTextSize)
+table.cell(t, 8, obv_dat_row, str.tostring(pe_obv_day_pct, "#.0") + "%",        bgcolor=c_obvBg, text_color=pe_pct_col,       text_size=tableTextSize)
+table.cell(t, 9, obv_dat_row, "│",                                               bgcolor=c_spacer, text_color=c_gray,          text_size=tableTextSize)
+table.cell(t,10, obv_dat_row, obv_bias_emoji + " " + obv_bias_lbl,              bgcolor=c_obvBg, text_color=obv_bias_clr,    text_size=tableTextSize)
+table.cell(t,11, obv_dat_row, "",                                                bgcolor=c_obvBg, text_color=c_gray,          text_size=tableTextSize)
+table.cell(t,12, obv_dat_row, "",                                                bgcolor=c_obvBg, text_color=c_gray,          text_size=tableTextSize)
+table.cell(t,13, obv_dat_row, "",                                                bgcolor=c_obvBg, text_color=c_gray,          text_size=tableTextSize)
 
-alertcondition(autoATM and needsRefresh and barsSinceATMShift == 0, "ATM DRIFT WARNING", "Live ATM has shifted — update ATM Strike input and re-add indicator")
+// ── OBV Interpretation row ──
+obv_interp =
+     obv_bias_lbl == "Strong Bullish"      ? "Strong call accumulation, puts unwinding" :
+     obv_bias_lbl == "Bullish"             ? "Call buying starting, puts neutral" :
+     obv_bias_lbl == "Volatility/Breakout" ? "Both sides building — Breakout near!" :
+     obv_bias_lbl == "Mild Bullish"        ? "Put covering only" :
+     obv_bias_lbl == "Sideways"            ? "No strong activity" :
+     obv_bias_lbl == "Mild Bearish"        ? "Put buying slowly" :
+     obv_bias_lbl == "Strong Bearish"      ? "Put accumulation, calls unwinding" :
+     obv_bias_lbl == "Bearish"             ? "Call unwinding" :
+     obv_bias_lbl == "Low Volatility"      ? "Both sides closing — consolidation" : ""
 
-// ================= CANDLE COLORING (SIGNAL SHADING) =================
-int ce_buy_count = (ce_otm2_cu ? 1 : 0) + (ce_otm1_cu ? 1 : 0) + (ce_atm_cu ? 1 : 0) + (ce_itm1_cu ? 1 : 0) + (ce_itm2_cu ? 1 : 0) + (isExpiry and ce_otm3_cu ? 1 : 0) + (isExpiry and ce_itm3_cu ? 1 : 0)
-int pe_sell_count = (pe_otm2_cd ? 1 : 0) + (pe_otm1_cd ? 1 : 0) + (pe_atm_cd ? 1 : 0) + (pe_itm1_cd ? 1 : 0) + (pe_itm2_cd ? 1 : 0) + (isExpiry and pe_otm3_cd ? 1 : 0) + (isExpiry and pe_itm3_cd ? 1 : 0)
-int pe_buy_count = (pe_otm2_cu ? 1 : 0) + (pe_otm1_cu ? 1 : 0) + (pe_atm_cu ? 1 : 0) + (pe_itm1_cu ? 1 : 0) + (pe_itm2_cu ? 1 : 0) + (isExpiry and pe_otm3_cu ? 1 : 0) + (isExpiry and pe_itm3_cu ? 1 : 0)
-int ce_sell_count = (ce_otm2_cd ? 1 : 0) + (ce_otm1_cd ? 1 : 0) + (ce_atm_cd ? 1 : 0) + (ce_itm1_cd ? 1 : 0) + (ce_itm2_cd ? 1 : 0) + (isExpiry and ce_otm3_cd ? 1 : 0) + (isExpiry and ce_itm3_cd ? 1 : 0)
+table.cell(t, 0, obv_int_row, "Interpretation:",  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 1, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 2, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 3, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 4, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 5, obv_int_row, obv_interp,          bgcolor=c_obvBg, text_color=obv_bias_clr, text_size=tableTextSize)
+table.cell(t, 6, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 7, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 8, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 9, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t,10, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t,11, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t,12, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t,13, obv_int_row, "",                  bgcolor=c_obvBg, text_color=c_gray,       text_size=tableTextSize)
+
+// ── OBV Base (1st candle) vs Current row ──
+// Base = aggregate OBV locked at 1st candle (fixed all day)
+// Now  = current aggregate OBV  |  Δ = intraday move in K units
+table.cell(t, 0, obv_tot_row, "Base CE:",  bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
+table.cell(t, 1, obv_tot_row, str.tostring(nz(ce_obv_base, 0) / 1000, "#.0") + "K",
+                               bgcolor=c_obvBg, text_color=c_white,       text_size=tableTextSize)
+table.cell(t, 2, obv_tot_row, "Now:",      bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
+table.cell(t, 3, obv_tot_row, str.tostring(raw_ce_obv / 1000, "#.0") + "K",
+                               bgcolor=c_obvBg, text_color=ce_obv_dir_col, text_size=tableTextSize)
+table.cell(t, 4, obv_tot_row, "│",         bgcolor=c_spacer, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 5, obv_tot_row, "Base PE:",  bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
+table.cell(t, 6, obv_tot_row, str.tostring(nz(pe_obv_base, 0) / 1000, "#.0") + "K",
+                               bgcolor=c_obvBg, text_color=c_white,       text_size=tableTextSize)
+table.cell(t, 7, obv_tot_row, "Now:",      bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
+table.cell(t, 8, obv_tot_row, str.tostring(raw_pe_obv / 1000, "#.0") + "K",
+                               bgcolor=c_obvBg, text_color=pe_obv_dir_col, text_size=tableTextSize)
+table.cell(t, 9, obv_tot_row, "│",         bgcolor=c_spacer, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t,10, obv_tot_row, "Δ CE:",     bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
+table.cell(t,11, obv_tot_row, str.tostring(ce_obv_day / 1000, "#.0") + "K",
+                               bgcolor=c_obvBg, text_color=ce_obv_dir_col, text_size=tableTextSize)
+table.cell(t,12, obv_tot_row, "Δ PE:",     bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
+table.cell(t,13, obv_tot_row, str.tostring(pe_obv_day / 1000, "#.0") + "K",
+                               bgcolor=c_obvBg, text_color=pe_obv_dir_col, text_size=tableTextSize)
+
+// ── OBV 2nd candle row ──
+// Shows the aggregate OBV delta captured at close of the 2nd candle of the day
+// % from base = 2nd candle delta / abs(base) * 100 — useful as early-session reference
+ce_2nd_pct = math.abs(nz(ce_obv_base, 0)) > 0 and not na(ce_obv_2nd) ?
+             (ce_obv_2nd / math.abs(ce_obv_base)) * 100 : 0.0
+pe_2nd_pct = math.abs(nz(pe_obv_base, 0)) > 0 and not na(pe_obv_2nd) ?
+             (pe_obv_2nd / math.abs(pe_obv_base)) * 100 : 0.0
+
+ce_2nd_pct_col = ce_2nd_pct > 0 ? color.new(color.lime, 0) : ce_2nd_pct < 0 ? color.new(color.red, 0) : color.new(color.gray, 0)
+pe_2nd_pct_col = pe_2nd_pct > 0 ? color.new(color.lime, 0) : pe_2nd_pct < 0 ? color.new(color.red, 0) : color.new(color.gray, 0)
+
+table.cell(t, 0, obv_2nd_row, "2nd CE:",  bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
+table.cell(t, 1, obv_2nd_row, str.tostring(nz(ce_obv_2nd, 0) / 1000, "#.0") + "K",
+                               bgcolor=c_obvBg, text_color=c_white,       text_size=tableTextSize)
+table.cell(t, 2, obv_2nd_row, str.tostring(ce_2nd_pct, "#.0") + "%",
+                               bgcolor=c_obvBg, text_color=ce_2nd_pct_col, text_size=tableTextSize)
+table.cell(t, 3, obv_2nd_row, "",          bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
+table.cell(t, 4, obv_2nd_row, "│",         bgcolor=c_spacer, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t, 5, obv_2nd_row, "2nd PE:",  bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
+table.cell(t, 6, obv_2nd_row, str.tostring(nz(pe_obv_2nd, 0) / 1000, "#.0") + "K",
+                               bgcolor=c_obvBg, text_color=c_white,       text_size=tableTextSize)
+table.cell(t, 7, obv_2nd_row, str.tostring(pe_2nd_pct, "#.0") + "%",
+                               bgcolor=c_obvBg, text_color=pe_2nd_pct_col, text_size=tableTextSize)
+table.cell(t, 8, obv_2nd_row, "",          bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
+table.cell(t, 9, obv_2nd_row, "│",         bgcolor=c_spacer, text_color=c_gray,       text_size=tableTextSize)
+table.cell(t,10, obv_2nd_row, "Δ CE:",     bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
+table.cell(t,11, obv_2nd_row, str.tostring(nz(ce_obv_2nd, 0) / 1000, "#.0") + "K",
+                               bgcolor=c_obvBg, text_color=ce_2nd_pct_col, text_size=tableTextSize)
+table.cell(t,12, obv_2nd_row, "Δ PE:",     bgcolor=c_obvBg, text_color=c_gray,        text_size=tableTextSize)
+table.cell(t,13, obv_2nd_row, str.tostring(nz(pe_obv_2nd, 0) / 1000, "#.0") + "K",
+                               bgcolor=c_obvBg, text_color=pe_2nd_pct_col, text_size=tableTextSize)
+
+// Hide full table when toggle is OFF
+if barstate.islast and not showTable
+    for r = 0 to 18
+        for c = 0 to 13
+            table.cell(t, c, r, "", bgcolor=color.new(color.black, 100), text_color=color.new(color.black, 100), text_size=size.tiny)
+
+// ================= CANDLE COLORING =================
+int ce_buy_count  = (ce_otm2_cu ? 1 : 0) + (ce_otm1_cu ? 1 : 0) + (ce_atm_cu ? 1 : 0) + (ce_itm1_cu ? 1 : 0) + (ce_itm2_cu ? 1 : 0) + (ce_otm3_cu ? 1 : 0) + (ce_itm3_cu ? 1 : 0)
+int pe_sell_count = (pe_otm2_cd ? 1 : 0) + (pe_otm1_cd ? 1 : 0) + (pe_atm_cd ? 1 : 0) + (pe_itm1_cd ? 1 : 0) + (pe_itm2_cd ? 1 : 0) + (pe_otm3_cd ? 1 : 0) + (pe_itm3_cd ? 1 : 0)
+int pe_buy_count  = (pe_otm2_cu ? 1 : 0) + (pe_otm1_cu ? 1 : 0) + (pe_atm_cu ? 1 : 0) + (pe_itm1_cu ? 1 : 0) + (pe_itm2_cu ? 1 : 0) + (pe_otm3_cu ? 1 : 0) + (pe_itm3_cu ? 1 : 0)
+int ce_sell_count = (ce_otm2_cd ? 1 : 0) + (ce_otm1_cd ? 1 : 0) + (ce_atm_cd ? 1 : 0) + (ce_itm1_cd ? 1 : 0) + (ce_itm2_cd ? 1 : 0) + (ce_otm3_cd ? 1 : 0) + (ce_itm3_cd ? 1 : 0)
 
 color candle_color = na
 if ce_buy_count > 5 or pe_sell_count > 5
@@ -404,245 +628,214 @@ else if pe_buy_count > 5 or ce_sell_count > 5
 
 barcolor(candle_color)
 
-// ================= PLOT LABELS (stacked, no gaps) =================
+// ================= PLOT LABELS =================
 var int last_up_pos   = -5
 var int up_lvl        = 0
-
 var int last_down_pos = -5
 var int down_lvl      = 0
 
 float y_step = nz(ta.atr(14)) * (spacerMult * 0.2)
 
-// ── JSON alert helper — builds the full message string ──
-// Format: {"chat_id":"-1003533948678","text":"<content>"}
-// <content> uses \n for line breaks inside the Telegram message
+// ── JSON alert helper ──
+//f_json(txt) =>
+//    sanitized = str.replace_all(txt, "\n", "\\n")
+//    sanitized := str.replace_all(sanitized, '"', '\\"')
+//    '{"chat_id":"-1003533948678","text":"' + sanitized + ' | TF: ' + timeframe.period + '"}'
+// ── JSON alert helper ──
 f_json(txt) =>
+    stage = str.contains(txt, "PRE ALERT") ? "pre_alert" : str.contains(txt, "CONFIRMED") ? "confirmed" : "event"
     sanitized = str.replace_all(txt, "\n", "\\n")
     sanitized := str.replace_all(sanitized, '"', '\\"')
-    '{"chat_id":"-1003533948678","text":"' + sanitized + ' | TF: ' + timeframe.period + '"}'
+    payloadText = sanitized + ' | TF: ' + timeframe.period
+    '{"source":"tradingview","chat_id":"-1003533948678","stage":"' + stage + '","text":"' + payloadText + '","message":"' + payloadText + '","timeframe":"' + timeframe.period + '","timestamp":"' + str.tostring(time) + '"}'
 
-// ── SPOT context line (appended to every option alert text) ──
-// *** CHANGED: added SPOT price and timeframe explicitly for clarity ***
-spot_line = "SPOT:" + str.tostring(n_close,"#.0") + " TF:" + timeframe.period + " " + n_vwap_pos + " " + n_ema50_pos + " RSI:" + str.tostring(n_rsi,"#.0") + " Trend:" + n_trend + " Signal:" + n_signal
 
-// ── CE BUY counters (below candle, LEFT) ──
+// ── SPOT context line ──
+spot_line = indexName + " SPOT:" + str.tostring(n_close,"#.0") + " TF:" + timeframe.period + " " + n_vwap_pos + " " + n_ema50_pos + " RSI:" + str.tostring(n_rsi,"#.0") + " Trend:" + n_trend + " Signal:" + n_signal
+
+// ================= CORE EVENT ALERTS =================
+obv_status_changed = ta.change(ce_obv_dir) != 0 or ta.change(pe_obv_dir) != 0
+
+if barstate.isconfirmed and n_crossUp
+    alert(f_json("SPOT EMA CROSS UP\n" + indexName + " EMA9 crossed above EMA26\n" + spot_line), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and n_crossDown
+    alert(f_json("SPOT EMA CROSS DOWN\n" + indexName + " EMA9 crossed below EMA26\n" + spot_line), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and n_st_flip
+    _st_msg = "SPOT SUPERTREND FLIP\n" + indexName + " " + timeframe.period + " | Supertrend: " + n_st_trend + "\nSpot: " + str.tostring(n_close, "#.0")
+    alert(f_json(_st_msg + "\n" + spot_line), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and obv_status_changed
+    _obv_msg = "OBV STATUS CHANGE | " + indexName + " " + timeframe.period + "\nCALL OBV: " + ce_dir_arrow + " | Day%: " + str.tostring(ce_obv_day_pct, "#.0") + "%\nPUT OBV: " + pe_dir_arrow + " | Day%: " + str.tostring(pe_obv_day_pct, "#.0") + "%\nBias: " + obv_bias_lbl
+    alert(f_json(_obv_msg + "\n" + spot_line), alert.freq_once_per_bar_close)
+
+// ── CE BUY labels ──
 string cb_txt = ""
 
 if ce_otm2_cu
-    _t = "BUY CE " + str.tostring(ce_otm2) + " OTM2\\nPrice:" + str.tostring(ce_otm2_p,"#.0") + " Trend:" + ce_otm2_t + " " + ce_otm2_v + " " + ce_otm2_e + " RSI:" + str.tostring(ce_otm2_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " BUY CE " + str.tostring(ce_otm2) + " OTM2\\nPrice:" + str.tostring(ce_otm2_p,"#.0") + " Trend:" + ce_otm2_t + " " + ce_otm2_v + " " + ce_otm2_e + " RSI:" + str.tostring(ce_otm2_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm2) + " OTM2 B"
-    // PRE ALERT (running candle)
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_otm1_cu
-    _t = "BUY CE " + str.tostring(ce_otm1) + " OTM1\\nPrice:" + str.tostring(ce_otm1_p,"#.0") + " Trend:" + ce_otm1_t + " " + ce_otm1_v + " " + ce_otm1_e + " RSI:" + str.tostring(ce_otm1_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " BUY CE " + str.tostring(ce_otm1) + " OTM1\\nPrice:" + str.tostring(ce_otm1_p,"#.0") + " Trend:" + ce_otm1_t + " " + ce_otm1_v + " " + ce_otm1_e + " RSI:" + str.tostring(ce_otm1_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm1) + " OTM1 B"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_atm_cu
-    _t = "BUY CE " + str.tostring(ce_atm) + " ATM\\nPrice:" + str.tostring(ce_atm_p,"#.0") + " Trend:" + ce_atm_t + " " + ce_atm_v + " " + ce_atm_e + " RSI:" + str.tostring(ce_atm_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " BUY CE " + str.tostring(ce_atm) + " ATM\\nPrice:" + str.tostring(ce_atm_p,"#.0") + " Trend:" + ce_atm_t + " " + ce_atm_v + " " + ce_atm_e + " RSI:" + str.tostring(ce_atm_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_atm) + " ATM B"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_itm1_cu
-    _t = "BUY CE " + str.tostring(ce_itm1) + " ITM1\\nPrice:" + str.tostring(ce_itm1_p,"#.0") + " Trend:" + ce_itm1_t + " " + ce_itm1_v + " " + ce_itm1_e + " RSI:" + str.tostring(ce_itm1_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " BUY CE " + str.tostring(ce_itm1) + " ITM1\\nPrice:" + str.tostring(ce_itm1_p,"#.0") + " Trend:" + ce_itm1_t + " " + ce_itm1_v + " " + ce_itm1_e + " RSI:" + str.tostring(ce_itm1_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm1) + " ITM1 B"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_itm2_cu
-    _t = "BUY CE " + str.tostring(ce_itm2) + " ITM2\\nPrice:" + str.tostring(ce_itm2_p,"#.0") + " Trend:" + ce_itm2_t + " " + ce_itm2_v + " " + ce_itm2_e + " RSI:" + str.tostring(ce_itm2_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " BUY CE " + str.tostring(ce_itm2) + " ITM2\\nPrice:" + str.tostring(ce_itm2_p,"#.0") + " Trend:" + ce_itm2_t + " " + ce_itm2_v + " " + ce_itm2_e + " RSI:" + str.tostring(ce_itm2_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm2) + " ITM2 B"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
-if isExpiry and ce_otm3_cu
-    _t = "BUY CE " + str.tostring(ce_otm3) + " OTM3\\nPrice:" + str.tostring(ce_otm3_p,"#.0") + " Trend:" + ce_otm3_t + " " + ce_otm3_v + " " + ce_otm3_e + " RSI:" + str.tostring(ce_otm3_r,"#.0") + "\\n" + spot_line
+if ce_otm3_cu
+    _t = indexName + " BUY CE " + str.tostring(ce_otm3) + " OTM3\\nPrice:" + str.tostring(ce_otm3_p,"#.0") + " Trend:" + ce_otm3_t + " " + ce_otm3_v + " " + ce_otm3_e + " RSI:" + str.tostring(ce_otm3_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm3) + " OTM3 B"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
-if isExpiry and ce_itm3_cu
-    _t = "BUY CE " + str.tostring(ce_itm3) + " ITM3\\nPrice:" + str.tostring(ce_itm3_p,"#.0") + " Trend:" + ce_itm3_t + " " + ce_itm3_v + " " + ce_itm3_e + " RSI:" + str.tostring(ce_itm3_r,"#.0") + "\\n" + spot_line
+if ce_itm3_cu
+    _t = indexName + " BUY CE " + str.tostring(ce_itm3) + " ITM3\\nPrice:" + str.tostring(ce_itm3_p,"#.0") + " Trend:" + ce_itm3_t + " " + ce_itm3_v + " " + ce_itm3_e + " RSI:" + str.tostring(ce_itm3_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm3) + " ITM3 B"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
-if cb_txt != ""
-    int pos = bar_index - 1
-    if pos - last_up_pos <= 3
+if cb_txt != "" and showSignalTags
+    if bar_index - last_up_pos <= 3
         up_lvl := (up_lvl + 1) % 4
     else
         up_lvl := 0
-    last_up_pos := pos
+    last_up_pos := bar_index
     float plot_y = low - (y_step * up_lvl)
-    label.new(pos, plot_y, text=cb_txt, style=label.style_label_up, color=color.new(#1565c0, 0), textcolor=color.white, size=size.tiny)
+    label.new(bar_index, plot_y, text=cb_txt, style=label.style_label_up, color=color.new(#1565c0, 0), textcolor=color.white, size=size.tiny)
 
-
-// ── CE SELL counters (above candle, LEFT) ──
+// ── CE SELL labels ──
 string cs_txt = ""
 
 if ce_otm2_cd
-    _t = "SELL CE " + str.tostring(ce_otm2) + " OTM2\\nPrice:" + str.tostring(ce_otm2_p,"#.0") + " Trend:" + ce_otm2_t + " " + ce_otm2_v + " " + ce_otm2_e + " RSI:" + str.tostring(ce_otm2_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " SELL CE " + str.tostring(ce_otm2) + " OTM2\\nPrice:" + str.tostring(ce_otm2_p,"#.0") + " Trend:" + ce_otm2_t + " " + ce_otm2_v + " " + ce_otm2_e + " RSI:" + str.tostring(ce_otm2_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm2) + " OTM2 S"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_otm1_cd
-    _t = "SELL CE " + str.tostring(ce_otm1) + " OTM1\\nPrice:" + str.tostring(ce_otm1_p,"#.0") + " Trend:" + ce_otm1_t + " " + ce_otm1_v + " " + ce_otm1_e + " RSI:" + str.tostring(ce_otm1_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " SELL CE " + str.tostring(ce_otm1) + " OTM1\\nPrice:" + str.tostring(ce_otm1_p,"#.0") + " Trend:" + ce_otm1_t + " " + ce_otm1_v + " " + ce_otm1_e + " RSI:" + str.tostring(ce_otm1_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm1) + " OTM1 S"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_atm_cd
-    _t = "SELL CE " + str.tostring(ce_atm) + " ATM\\nPrice:" + str.tostring(ce_atm_p,"#.0") + " Trend:" + ce_atm_t + " " + ce_atm_v + " " + ce_atm_e + " RSI:" + str.tostring(ce_atm_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " SELL CE " + str.tostring(ce_atm) + " ATM\\nPrice:" + str.tostring(ce_atm_p,"#.0") + " Trend:" + ce_atm_t + " " + ce_atm_v + " " + ce_atm_e + " RSI:" + str.tostring(ce_atm_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_atm) + " ATM S"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_itm1_cd
-    _t = "SELL CE " + str.tostring(ce_itm1) + " ITM1\\nPrice:" + str.tostring(ce_itm1_p,"#.0") + " Trend:" + ce_itm1_t + " " + ce_itm1_v + " " + ce_itm1_e + " RSI:" + str.tostring(ce_itm1_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " SELL CE " + str.tostring(ce_itm1) + " ITM1\\nPrice:" + str.tostring(ce_itm1_p,"#.0") + " Trend:" + ce_itm1_t + " " + ce_itm1_v + " " + ce_itm1_e + " RSI:" + str.tostring(ce_itm1_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm1) + " ITM1 S"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_itm2_cd
-    _t = "SELL CE " + str.tostring(ce_itm2) + " ITM2\\nPrice:" + str.tostring(ce_itm2_p,"#.0") + " Trend:" + ce_itm2_t + " " + ce_itm2_v + " " + ce_itm2_e + " RSI:" + str.tostring(ce_itm2_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " SELL CE " + str.tostring(ce_itm2) + " ITM2\\nPrice:" + str.tostring(ce_itm2_p,"#.0") + " Trend:" + ce_itm2_t + " " + ce_itm2_v + " " + ce_itm2_e + " RSI:" + str.tostring(ce_itm2_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm2) + " ITM2 S"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
-if isExpiry and ce_otm3_cd
-    _t = "SELL CE " + str.tostring(ce_otm3) + " OTM3\\nPrice:" + str.tostring(ce_otm3_p,"#.0") + " Trend:" + ce_otm3_t + " " + ce_otm3_v + " " + ce_otm3_e + " RSI:" + str.tostring(ce_otm3_r,"#.0") + "\\n" + spot_line
+if ce_otm3_cd
+    _t = indexName + " SELL CE " + str.tostring(ce_otm3) + " OTM3\\nPrice:" + str.tostring(ce_otm3_p,"#.0") + " Trend:" + ce_otm3_t + " " + ce_otm3_v + " " + ce_otm3_e + " RSI:" + str.tostring(ce_otm3_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm3) + " OTM3 S"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
-if isExpiry and ce_itm3_cd
-    _t = "SELL CE " + str.tostring(ce_itm3) + " ITM3\\nPrice:" + str.tostring(ce_itm3_p,"#.0") + " Trend:" + ce_itm3_t + " " + ce_itm3_v + " " + ce_itm3_e + " RSI:" + str.tostring(ce_itm3_r,"#.0") + "\\n" + spot_line
+if ce_itm3_cd
+    _t = indexName + " SELL CE " + str.tostring(ce_itm3) + " ITM3\\nPrice:" + str.tostring(ce_itm3_p,"#.0") + " Trend:" + ce_itm3_t + " " + ce_itm3_v + " " + ce_itm3_e + " RSI:" + str.tostring(ce_itm3_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm3) + " ITM3 S"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
-if cs_txt != ""
-    int pos = bar_index - 1
-    if pos - last_down_pos <= 3
+if cs_txt != "" and showSignalTags
+    if bar_index - last_down_pos <= 3
         down_lvl := (down_lvl + 1) % 4
     else
         down_lvl := 0
-    last_down_pos := pos
+    last_down_pos := bar_index
     float plot_y = high + (y_step * down_lvl)
-    label.new(pos, plot_y, text=cs_txt, style=label.style_label_down, color=color.new(#1565c0, 0), textcolor=color.white, size=size.tiny)
+    label.new(bar_index, plot_y, text=cs_txt, style=label.style_label_down, color=color.new(#1565c0, 0), textcolor=color.white, size=size.tiny)
 
-
-// ── PE BUY counters (below candle, RIGHT) ──
+// ── PE BUY labels ──
 string pb_txt = ""
 
 if pe_otm2_cu
-    _t = "BUY PE " + str.tostring(pe_otm2) + " OTM2\\nPrice:" + str.tostring(pe_otm2_p,"#.0") + " Trend:" + pe_otm2_t + " " + pe_otm2_v + " " + pe_otm2_e + " RSI:" + str.tostring(pe_otm2_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " BUY PE " + str.tostring(pe_otm2) + " OTM2\\nPrice:" + str.tostring(pe_otm2_p,"#.0") + " Trend:" + pe_otm2_t + " " + pe_otm2_v + " " + pe_otm2_e + " RSI:" + str.tostring(pe_otm2_r,"#.0") + "\\n" + spot_line
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm2) + " OTM2 B"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_otm1_cu
-    _t = "BUY PE " + str.tostring(pe_otm1) + " OTM1\\nPrice:" + str.tostring(pe_otm1_p,"#.0") + " Trend:" + pe_otm1_t + " " + pe_otm1_v + " " + pe_otm1_e + " RSI:" + str.tostring(pe_otm1_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " BUY PE " + str.tostring(pe_otm1) + " OTM1\\nPrice:" + str.tostring(pe_otm1_p,"#.0") + " Trend:" + pe_otm1_t + " " + pe_otm1_v + " " + pe_otm1_e + " RSI:" + str.tostring(pe_otm1_r,"#.0") + "\\n" + spot_line
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm1) + " OTM1 B"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_atm_cu
-    _t = "BUY PE " + str.tostring(pe_atm) + " ATM\\nPrice:" + str.tostring(pe_atm_p,"#.0") + " Trend:" + pe_atm_t + " " + pe_atm_v + " " + pe_atm_e + " RSI:" + str.tostring(pe_atm_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " BUY PE " + str.tostring(pe_atm) + " ATM\\nPrice:" + str.tostring(pe_atm_p,"#.0") + " Trend:" + pe_atm_t + " " + pe_atm_v + " " + pe_atm_e + " RSI:" + str.tostring(pe_atm_r,"#.0") + "\\n" + spot_line
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_atm) + " ATM B"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_itm1_cu
-    _t = "BUY PE " + str.tostring(pe_itm1) + " ITM1\\nPrice:" + str.tostring(pe_itm1_p,"#.0") + " Trend:" + pe_itm1_t + " " + pe_itm1_v + " " + pe_itm1_e + " RSI:" + str.tostring(pe_itm1_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " BUY PE " + str.tostring(pe_itm1) + " ITM1\\nPrice:" + str.tostring(pe_itm1_p,"#.0") + " Trend:" + pe_itm1_t + " " + pe_itm1_v + " " + pe_itm1_e + " RSI:" + str.tostring(pe_itm1_r,"#.0") + "\\n" + spot_line
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm1) + " ITM1 B"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_itm2_cu
-    _t = "BUY PE " + str.tostring(pe_itm2) + " ITM2\\nPrice:" + str.tostring(pe_itm2_p,"#.0") + " Trend:" + pe_itm2_t + " " + pe_itm2_v + " " + pe_itm2_e + " RSI:" + str.tostring(pe_itm2_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " BUY PE " + str.tostring(pe_itm2) + " ITM2\\nPrice:" + str.tostring(pe_itm2_p,"#.0") + " Trend:" + pe_itm2_t + " " + pe_itm2_v + " " + pe_itm2_e + " RSI:" + str.tostring(pe_itm2_r,"#.0") + "\\n" + spot_line
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm2) + " ITM2 B"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
-if pb_txt != ""
-    int pos = bar_index + 1
+if pb_txt != "" and showSignalTags
     float plot_y = low - (y_step * up_lvl)
-    label.new(pos, plot_y, text=pb_txt, style=label.style_label_up, color=color.new(#ad1457, 0), textcolor=color.white, size=size.tiny)
+    label.new(bar_index, plot_y, text=pb_txt, style=label.style_label_up, color=color.new(#ad1457, 0), textcolor=color.white, size=size.tiny)
 
-
-// ── PE SELL counters (above candle, RIGHT) ──
+// ── PE SELL labels ──
 string ps_txt = ""
 
 if pe_otm2_cd
-    _t = "SELL PE " + str.tostring(pe_otm2) + " OTM2\\nPrice:" + str.tostring(pe_otm2_p,"#.0") + " Trend:" + pe_otm2_t + " " + pe_otm2_v + " " + pe_otm2_e + " RSI:" + str.tostring(pe_otm2_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " SELL PE " + str.tostring(pe_otm2) + " OTM2\\nPrice:" + str.tostring(pe_otm2_p,"#.0") + " Trend:" + pe_otm2_t + " " + pe_otm2_v + " " + pe_otm2_e + " RSI:" + str.tostring(pe_otm2_r,"#.0") + "\\n" + spot_line
     ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm2) + " OTM2 S"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_otm1_cd
-    _t = "SELL PE " + str.tostring(pe_otm1) + " OTM1\\nPrice:" + str.tostring(pe_otm1_p,"#.0") + " Trend:" + pe_otm1_t + " " + pe_otm1_v + " " + pe_otm1_e + " RSI:" + str.tostring(pe_otm1_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " SELL PE " + str.tostring(pe_otm1) + " OTM1\\nPrice:" + str.tostring(pe_otm1_p,"#.0") + " Trend:" + pe_otm1_t + " " + pe_otm1_v + " " + pe_otm1_e + " RSI:" + str.tostring(pe_otm1_r,"#.0") + "\\n" + spot_line
     ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm1) + " OTM1 S"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_atm_cd
-    _t = "SELL PE " + str.tostring(pe_atm) + " ATM\\nPrice:" + str.tostring(pe_atm_p,"#.0") + " Trend:" + pe_atm_t + " " + pe_atm_v + " " + pe_atm_e + " RSI:" + str.tostring(pe_atm_r,"#.0") + "\\n" + spot_line
+    _t = indexName + " SELL PE " + str.tostring(pe_atm) + " ATM\\nPrice:" + str.tostring(pe_atm_p,"#.0") + " Trend:" + pe_atm_t + " " + pe_atm_v + " " + pe_atm_e + " RSI:" + str.tostring(pe_atm_r,"#.0") + "\\n" + spot_line
     ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_atm) + " ATM S"
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
-
-    // CONFIRMED ALERT (candle close)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
-if ps_txt != ""
-    int pos = bar_index + 1
+if ps_txt != "" and showSignalTags
     float plot_y = high + (y_step * down_lvl)
-    label.new(pos, plot_y, text=ps_txt, style=label.style_label_down, color=color.new(#ad1457, 0), textcolor=color.white, size=size.tiny)
+    label.new(bar_index, plot_y, text=ps_txt, style=label.style_label_down, color=color.new(#ad1457, 0), textcolor=color.white, size=size.tiny)
