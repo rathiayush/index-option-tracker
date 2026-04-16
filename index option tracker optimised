@@ -697,7 +697,7 @@ var int up_lvl        = 0
 var int last_down_pos = -5
 var int down_lvl      = 0
 
-float y_step = nz(ta.atr(14)) * (spacerMult * 0.2)
+float y_step = nz(ta.atr(14)) * (spacerMult * 0.45)
 
 // ── JSON alert helper ──
 //f_json(txt) =>
@@ -735,242 +735,294 @@ if barstate.isconfirmed and obv_status_changed
 
 // ── CE BUY labels ──
 string cb_txt = ""
+int cb_count = 0
 
 if ce_otm4_cu
     _t = indexName + " BUY CE " + str.tostring(ce_otm4) + " OTM4\\nPrice:" + str.tostring(ce_otm4_p,"#.0") + " Trend:" + ce_otm4_t + " " + ce_otm4_v + " " + ce_otm4_e + " RSI:" + str.tostring(ce_otm4_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm4) + " OTM4 B"
+    cb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_otm2_cu
     _t = indexName + " BUY CE " + str.tostring(ce_otm2) + " OTM2\\nPrice:" + str.tostring(ce_otm2_p,"#.0") + " Trend:" + ce_otm2_t + " " + ce_otm2_v + " " + ce_otm2_e + " RSI:" + str.tostring(ce_otm2_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm2) + " OTM2 B"
+    cb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_otm1_cu
     _t = indexName + " BUY CE " + str.tostring(ce_otm1) + " OTM1\\nPrice:" + str.tostring(ce_otm1_p,"#.0") + " Trend:" + ce_otm1_t + " " + ce_otm1_v + " " + ce_otm1_e + " RSI:" + str.tostring(ce_otm1_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm1) + " OTM1 B"
+    cb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_atm_cu
     _t = indexName + " BUY CE " + str.tostring(ce_atm) + " ATM\\nPrice:" + str.tostring(ce_atm_p,"#.0") + " Trend:" + ce_atm_t + " " + ce_atm_v + " " + ce_atm_e + " RSI:" + str.tostring(ce_atm_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_atm) + " ATM B"
+    cb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_itm1_cu
     _t = indexName + " BUY CE " + str.tostring(ce_itm1) + " ITM1\\nPrice:" + str.tostring(ce_itm1_p,"#.0") + " Trend:" + ce_itm1_t + " " + ce_itm1_v + " " + ce_itm1_e + " RSI:" + str.tostring(ce_itm1_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm1) + " ITM1 B"
+    cb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_itm2_cu
     _t = indexName + " BUY CE " + str.tostring(ce_itm2) + " ITM2\\nPrice:" + str.tostring(ce_itm2_p,"#.0") + " Trend:" + ce_itm2_t + " " + ce_itm2_v + " " + ce_itm2_e + " RSI:" + str.tostring(ce_itm2_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm2) + " ITM2 B"
+    cb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_otm3_cu
     _t = indexName + " BUY CE " + str.tostring(ce_otm3) + " OTM3\\nPrice:" + str.tostring(ce_otm3_p,"#.0") + " Trend:" + ce_otm3_t + " " + ce_otm3_v + " " + ce_otm3_e + " RSI:" + str.tostring(ce_otm3_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm3) + " OTM3 B"
+    cb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_itm3_cu
     _t = indexName + " BUY CE " + str.tostring(ce_itm3) + " ITM3\\nPrice:" + str.tostring(ce_itm3_p,"#.0") + " Trend:" + ce_itm3_t + " " + ce_itm3_v + " " + ce_itm3_e + " RSI:" + str.tostring(ce_itm3_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm3) + " ITM3 B"
+    cb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_itm4_cu
     _t = indexName + " BUY CE " + str.tostring(ce_itm4) + " ITM4\\nPrice:" + str.tostring(ce_itm4_p,"#.0") + " Trend:" + ce_itm4_t + " " + ce_itm4_v + " " + ce_itm4_e + " RSI:" + str.tostring(ce_itm4_r,"#.0") + "\\n" + spot_line
     cb_txt := cb_txt + (cb_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm4) + " ITM4 B"
+    cb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if cb_txt != "" and showSignalTags
     if bar_index - last_up_pos <= 3
-        up_lvl := (up_lvl + 1) % 4
+        up_lvl := (up_lvl + 1) % 10
     else
         up_lvl := 0
     last_up_pos := bar_index
     float plot_y = low - (y_step * up_lvl)
-    label.new(bar_index, plot_y, text=cb_txt, style=label.style_label_up, color=color.new(#1565c0, 0), textcolor=color.white, size=size.tiny)
+    cb_tip = "CE BUY signals (" + str.tostring(cb_count) + ")\n" + cb_txt
+    label.new(bar_index, plot_y, text=" 🟦B" + str.tostring(cb_count) + " ", tooltip=cb_tip, style=label.style_label_up, color=color.new(#1565c0, 0), textcolor=color.white, size=size.small)
 
 // ── CE SELL labels ──
 string cs_txt = ""
+int cs_count = 0
 
 if ce_otm4_cd
     _t = indexName + " SELL CE " + str.tostring(ce_otm4) + " OTM4\\nPrice:" + str.tostring(ce_otm4_p,"#.0") + " Trend:" + ce_otm4_t + " " + ce_otm4_v + " " + ce_otm4_e + " RSI:" + str.tostring(ce_otm4_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm4) + " OTM4 S"
+    cs_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_otm2_cd
     _t = indexName + " SELL CE " + str.tostring(ce_otm2) + " OTM2\\nPrice:" + str.tostring(ce_otm2_p,"#.0") + " Trend:" + ce_otm2_t + " " + ce_otm2_v + " " + ce_otm2_e + " RSI:" + str.tostring(ce_otm2_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm2) + " OTM2 S"
+    cs_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_otm1_cd
     _t = indexName + " SELL CE " + str.tostring(ce_otm1) + " OTM1\\nPrice:" + str.tostring(ce_otm1_p,"#.0") + " Trend:" + ce_otm1_t + " " + ce_otm1_v + " " + ce_otm1_e + " RSI:" + str.tostring(ce_otm1_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm1) + " OTM1 S"
+    cs_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_atm_cd
     _t = indexName + " SELL CE " + str.tostring(ce_atm) + " ATM\\nPrice:" + str.tostring(ce_atm_p,"#.0") + " Trend:" + ce_atm_t + " " + ce_atm_v + " " + ce_atm_e + " RSI:" + str.tostring(ce_atm_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_atm) + " ATM S"
+    cs_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_itm1_cd
     _t = indexName + " SELL CE " + str.tostring(ce_itm1) + " ITM1\\nPrice:" + str.tostring(ce_itm1_p,"#.0") + " Trend:" + ce_itm1_t + " " + ce_itm1_v + " " + ce_itm1_e + " RSI:" + str.tostring(ce_itm1_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm1) + " ITM1 S"
+    cs_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_itm2_cd
     _t = indexName + " SELL CE " + str.tostring(ce_itm2) + " ITM2\\nPrice:" + str.tostring(ce_itm2_p,"#.0") + " Trend:" + ce_itm2_t + " " + ce_itm2_v + " " + ce_itm2_e + " RSI:" + str.tostring(ce_itm2_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm2) + " ITM2 S"
+    cs_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_otm3_cd
     _t = indexName + " SELL CE " + str.tostring(ce_otm3) + " OTM3\\nPrice:" + str.tostring(ce_otm3_p,"#.0") + " Trend:" + ce_otm3_t + " " + ce_otm3_v + " " + ce_otm3_e + " RSI:" + str.tostring(ce_otm3_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_otm3) + " OTM3 S"
+    cs_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_itm3_cd
     _t = indexName + " SELL CE " + str.tostring(ce_itm3) + " ITM3\\nPrice:" + str.tostring(ce_itm3_p,"#.0") + " Trend:" + ce_itm3_t + " " + ce_itm3_v + " " + ce_itm3_e + " RSI:" + str.tostring(ce_itm3_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm3) + " ITM3 S"
+    cs_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ce_itm4_cd
     _t = indexName + " SELL CE " + str.tostring(ce_itm4) + " ITM4\\nPrice:" + str.tostring(ce_itm4_p,"#.0") + " Trend:" + ce_itm4_t + " " + ce_itm4_v + " " + ce_itm4_e + " RSI:" + str.tostring(ce_itm4_r,"#.0") + "\\n" + spot_line
     cs_txt := cs_txt + (cs_txt == "" ? "" : "\n") + "CE " + str.tostring(ce_itm4) + " ITM4 S"
+    cs_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if cs_txt != "" and showSignalTags
     if bar_index - last_down_pos <= 3
-        down_lvl := (down_lvl + 1) % 4
+        down_lvl := (down_lvl + 1) % 10
     else
         down_lvl := 0
     last_down_pos := bar_index
     float plot_y = high + (y_step * down_lvl)
-    label.new(bar_index, plot_y, text=cs_txt, style=label.style_label_down, color=color.new(#1565c0, 0), textcolor=color.white, size=size.tiny)
+    cs_tip = "CE SELL signals (" + str.tostring(cs_count) + ")\n" + cs_txt
+    label.new(bar_index, plot_y, text=" 🟦S" + str.tostring(cs_count) + " ", tooltip=cs_tip, style=label.style_label_down, color=color.new(#1565c0, 0), textcolor=color.white, size=size.small)
 
 // ── PE BUY labels ──
 string pb_txt = ""
+int pb_count = 0
 
 if pe_otm4_cu
     _t = indexName + " BUY PE " + str.tostring(pe_otm4) + " OTM4\\nPrice:" + str.tostring(pe_otm4_p,"#.0") + " Trend:" + pe_otm4_t + " " + pe_otm4_v + " " + pe_otm4_e + " RSI:" + str.tostring(pe_otm4_r,"#.0") + "\\n" + spot_line
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm4) + " OTM4 B"
+    pb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_otm2_cu
     _t = indexName + " BUY PE " + str.tostring(pe_otm2) + " OTM2\\nPrice:" + str.tostring(pe_otm2_p,"#.0") + " Trend:" + pe_otm2_t + " " + pe_otm2_v + " " + pe_otm2_e + " RSI:" + str.tostring(pe_otm2_r,"#.0") + "\\n" + spot_line
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm2) + " OTM2 B"
+    pb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_otm1_cu
     _t = indexName + " BUY PE " + str.tostring(pe_otm1) + " OTM1\\nPrice:" + str.tostring(pe_otm1_p,"#.0") + " Trend:" + pe_otm1_t + " " + pe_otm1_v + " " + pe_otm1_e + " RSI:" + str.tostring(pe_otm1_r,"#.0") + "\\n" + spot_line
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm1) + " OTM1 B"
+    pb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_atm_cu
     _t = indexName + " BUY PE " + str.tostring(pe_atm) + " ATM\\nPrice:" + str.tostring(pe_atm_p,"#.0") + " Trend:" + pe_atm_t + " " + pe_atm_v + " " + pe_atm_e + " RSI:" + str.tostring(pe_atm_r,"#.0") + "\\n" + spot_line
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_atm) + " ATM B"
+    pb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_itm1_cu
     _t = indexName + " BUY PE " + str.tostring(pe_itm1) + " ITM1\\nPrice:" + str.tostring(pe_itm1_p,"#.0") + " Trend:" + pe_itm1_t + " " + pe_itm1_v + " " + pe_itm1_e + " RSI:" + str.tostring(pe_itm1_r,"#.0") + "\\n" + spot_line
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm1) + " ITM1 B"
+    pb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_itm2_cu
     _t = indexName + " BUY PE " + str.tostring(pe_itm2) + " ITM2\\nPrice:" + str.tostring(pe_itm2_p,"#.0") + " Trend:" + pe_itm2_t + " " + pe_itm2_v + " " + pe_itm2_e + " RSI:" + str.tostring(pe_itm2_r,"#.0") + "\\n" + spot_line
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm2) + " ITM2 B"
+    pb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_itm3_cu
     _t = indexName + " BUY PE " + str.tostring(pe_itm3) + " ITM3\\nPrice:" + str.tostring(pe_itm3_p,"#.0") + " Trend:" + pe_itm3_t + " " + pe_itm3_v + " " + pe_itm3_e + " RSI:" + str.tostring(pe_itm3_r,"#.0") + "\\n" + spot_line
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm3) + " ITM3 B"
+    pb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_itm4_cu
     _t = indexName + " BUY PE " + str.tostring(pe_itm4) + " ITM4\\nPrice:" + str.tostring(pe_itm4_p,"#.0") + " Trend:" + pe_itm4_t + " " + pe_itm4_v + " " + pe_itm4_e + " RSI:" + str.tostring(pe_itm4_r,"#.0") + "\\n" + spot_line
     pb_txt := pb_txt + (pb_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm4) + " ITM4 B"
+    pb_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pb_txt != "" and showSignalTags
+    if bar_index - last_up_pos <= 3
+        up_lvl := (up_lvl + 1) % 10
+    else
+        up_lvl := 0
+    last_up_pos := bar_index
     float plot_y = low - (y_step * up_lvl)
-    label.new(bar_index, plot_y, text=pb_txt, style=label.style_label_up, color=color.new(#ad1457, 0), textcolor=color.white, size=size.tiny)
+    pb_tip = "PE BUY signals (" + str.tostring(pb_count) + ")\n" + pb_txt
+    label.new(bar_index, plot_y, text=" 🟪B" + str.tostring(pb_count) + " ", tooltip=pb_tip, style=label.style_label_up, color=color.new(#ad1457, 0), textcolor=color.white, size=size.small)
 
 // ── PE SELL labels ──
 string ps_txt = ""
+int ps_count = 0
 
 if pe_otm4_cd
     _t = indexName + " SELL PE " + str.tostring(pe_otm4) + " OTM4\\nPrice:" + str.tostring(pe_otm4_p,"#.0") + " Trend:" + pe_otm4_t + " " + pe_otm4_v + " " + pe_otm4_e + " RSI:" + str.tostring(pe_otm4_r,"#.0") + "\\n" + spot_line
     ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm4) + " OTM4 S"
+    ps_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_otm2_cd
     _t = indexName + " SELL PE " + str.tostring(pe_otm2) + " OTM2\\nPrice:" + str.tostring(pe_otm2_p,"#.0") + " Trend:" + pe_otm2_t + " " + pe_otm2_v + " " + pe_otm2_e + " RSI:" + str.tostring(pe_otm2_r,"#.0") + "\\n" + spot_line
     ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm2) + " OTM2 S"
+    ps_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_otm1_cd
     _t = indexName + " SELL PE " + str.tostring(pe_otm1) + " OTM1\\nPrice:" + str.tostring(pe_otm1_p,"#.0") + " Trend:" + pe_otm1_t + " " + pe_otm1_v + " " + pe_otm1_e + " RSI:" + str.tostring(pe_otm1_r,"#.0") + "\\n" + spot_line
     ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_otm1) + " OTM1 S"
+    ps_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_atm_cd
     _t = indexName + " SELL PE " + str.tostring(pe_atm) + " ATM\\nPrice:" + str.tostring(pe_atm_p,"#.0") + " Trend:" + pe_atm_t + " " + pe_atm_v + " " + pe_atm_e + " RSI:" + str.tostring(pe_atm_r,"#.0") + "\\n" + spot_line
     ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_atm) + " ATM S"
+    ps_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_itm1_cd
     _t = indexName + " SELL PE " + str.tostring(pe_itm1) + " ITM1\\nPrice:" + str.tostring(pe_itm1_p,"#.0") + " Trend:" + pe_itm1_t + " " + pe_itm1_v + " " + pe_itm1_e + " RSI:" + str.tostring(pe_itm1_r,"#.0") + "\\n" + spot_line
     ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm1) + " ITM1 S"
+    ps_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_itm2_cd
     _t = indexName + " SELL PE " + str.tostring(pe_itm2) + " ITM2\\nPrice:" + str.tostring(pe_itm2_p,"#.0") + " Trend:" + pe_itm2_t + " " + pe_itm2_v + " " + pe_itm2_e + " RSI:" + str.tostring(pe_itm2_r,"#.0") + "\\n" + spot_line
     ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm2) + " ITM2 S"
+    ps_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_itm3_cd
     _t = indexName + " SELL PE " + str.tostring(pe_itm3) + " ITM3\\nPrice:" + str.tostring(pe_itm3_p,"#.0") + " Trend:" + pe_itm3_t + " " + pe_itm3_v + " " + pe_itm3_e + " RSI:" + str.tostring(pe_itm3_r,"#.0") + "\\n" + spot_line
     ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm3) + " ITM3 S"
+    ps_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if pe_itm4_cd
     _t = indexName + " SELL PE " + str.tostring(pe_itm4) + " ITM4\\nPrice:" + str.tostring(pe_itm4_p,"#.0") + " Trend:" + pe_itm4_t + " " + pe_itm4_v + " " + pe_itm4_e + " RSI:" + str.tostring(pe_itm4_r,"#.0") + "\\n" + spot_line
     ps_txt := ps_txt + (ps_txt == "" ? "" : "\n") + "PE " + str.tostring(pe_itm4) + " ITM4 S"
+    ps_count += 1
     alert(f_json("⚡ PRE ALERT\n" + _t), alert.freq_once_per_bar)
     alert(f_json("✅ CONFIRMED\n" + _t), alert.freq_once_per_bar_close)
 
 if ps_txt != "" and showSignalTags
+    if bar_index - last_down_pos <= 3
+        down_lvl := (down_lvl + 1) % 10
+    else
+        down_lvl := 0
+    last_down_pos := bar_index
     float plot_y = high + (y_step * down_lvl)
-    label.new(bar_index, plot_y, text=ps_txt, style=label.style_label_down, color=color.new(#ad1457, 0), textcolor=color.white, size=size.tiny)
+    ps_tip = "PE SELL signals (" + str.tostring(ps_count) + ")\n" + ps_txt
+    label.new(bar_index, plot_y, text=" 🟪S" + str.tostring(ps_count) + " ", tooltip=ps_tip, style=label.style_label_down, color=color.new(#ad1457, 0), textcolor=color.white, size=size.small)
