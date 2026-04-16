@@ -23,7 +23,6 @@ autoATM        = input.bool(true, "Auto ATM from SPOT", tooltip="When ON, ATM is
 refreshWarnPts = input.int(100, "Refresh Warning (pts drift)", minval=50, step=50)
 
 // ── OBV Settings ──
-showOBVLines  = input.bool(true,  "Show OBV Lines on Chart")
 obvEmaLen     = input.int(9,      "OBV EMA Length", minval=2, maxval=50)
 obvThreshPct  = input.float(1.0,  "OBV Trend Threshold %", minval=0.1, maxval=10.0, step=0.1,
                  tooltip="% change in smoothed OBV to classify as Increasing/Decreasing vs Stable")
@@ -309,13 +308,6 @@ pe_dir_arrow = pe_obv_dir == 1 ? "⬆" : pe_obv_dir == -1 ? "⬇" : "➖"
 // ── OBV Line Colors ──
 ce_obv_line_clr = ce_obv_dir == 1 ? color.new(color.lime, 0) : ce_obv_dir == -1 ? color.new(color.red, 0) : color.new(color.gray, 30)
 pe_obv_line_clr = pe_obv_dir == 1 ? color.new(#ff5252, 0)   : pe_obv_dir == -1 ? color.new(#7c4dff, 0)  : color.new(color.gray, 30)
-
-// ── Plot OBV EMA lines on chart ──
-plot(showOBVLines ? ce_obv_ema : na, title="CE Aggregate OBV EMA", color=ce_obv_line_clr, linewidth=2, style=plot.style_line)
-plot(showOBVLines ? pe_obv_ema : na, title="PE Aggregate OBV EMA", color=pe_obv_line_clr, linewidth=2, style=plot.style_line)
-
-// ── Zero reference line for OBV ──
-hline(0, "OBV Zero", color=color.new(color.gray, 70), linestyle=hline.style_dotted, linewidth=1)
 
 // ================= COLOR HELPERS =================
 c_bull    = color.new(color.lime,   0)
@@ -697,7 +689,9 @@ var int up_lvl        = 0
 var int last_down_pos = -5
 var int down_lvl      = 0
 
-float y_step = nz(ta.atr(14)) * (spacerMult * 0.45)
+base_step = nz(ta.atr(14)) * (spacerMult * 0.45)
+min_step  = n_close * 0.0015
+float y_step = math.max(base_step, min_step)
 
 // ── JSON alert helper ──
 //f_json(txt) =>
@@ -806,7 +800,7 @@ if cb_txt != "" and showSignalTags
     else
         up_lvl := 0
     last_up_pos := bar_index
-    float plot_y = low - (y_step * up_lvl)
+    float plot_y = low - (y_step * (up_lvl + 1))
     cb_tip = "CE BUY signals (" + str.tostring(cb_count) + ")\n" + cb_txt
     label.new(bar_index, plot_y, text=" 🟦B" + str.tostring(cb_count) + " ", tooltip=cb_tip, style=label.style_label_up, color=color.new(#1565c0, 0), textcolor=color.white, size=size.small)
 
@@ -883,7 +877,7 @@ if cs_txt != "" and showSignalTags
     else
         down_lvl := 0
     last_down_pos := bar_index
-    float plot_y = high + (y_step * down_lvl)
+    float plot_y = high + (y_step * (down_lvl + 1))
     cs_tip = "CE SELL signals (" + str.tostring(cs_count) + ")\n" + cs_txt
     label.new(bar_index, plot_y, text=" 🟦S" + str.tostring(cs_count) + " ", tooltip=cs_tip, style=label.style_label_down, color=color.new(#1565c0, 0), textcolor=color.white, size=size.small)
 
@@ -953,7 +947,7 @@ if pb_txt != "" and showSignalTags
     else
         up_lvl := 0
     last_up_pos := bar_index
-    float plot_y = low - (y_step * up_lvl)
+    float plot_y = low - (y_step * (up_lvl + 1))
     pb_tip = "PE BUY signals (" + str.tostring(pb_count) + ")\n" + pb_txt
     label.new(bar_index, plot_y, text=" 🟪B" + str.tostring(pb_count) + " ", tooltip=pb_tip, style=label.style_label_up, color=color.new(#ad1457, 0), textcolor=color.white, size=size.small)
 
@@ -1023,6 +1017,6 @@ if ps_txt != "" and showSignalTags
     else
         down_lvl := 0
     last_down_pos := bar_index
-    float plot_y = high + (y_step * down_lvl)
+    float plot_y = high + (y_step * (down_lvl + 1))
     ps_tip = "PE SELL signals (" + str.tostring(ps_count) + ")\n" + ps_txt
     label.new(bar_index, plot_y, text=" 🟪S" + str.tostring(ps_count) + " ", tooltip=ps_tip, style=label.style_label_down, color=color.new(#ad1457, 0), textcolor=color.white, size=size.small)
