@@ -9,6 +9,7 @@ strikeStep   = input.int(50, "Strike Step")
 smoothLen    = input.int(9, "OBV EMA Length", minval=1)
 displayMode  = input.string("Raw", "Display Mode", options=["Raw", "Percent"])
 showTable    = input.bool(true, "Show % Change Table")
+showResetDebug = input.bool(false, "Show Daily Reset Marker")
 
 // ===== Helpers =====
 f_sym(_strike, _isCall) =>
@@ -64,50 +65,57 @@ peRawObv += nz(f_obv(f_sym(pe_p2, false)))
 peRawObv += nz(f_obv(f_sym(pe_p3, false)))
 peRawObv += nz(f_obv(f_sym(pe_p4, false)))
 
-// ===== Day Opening Candle Baseline =====
+// ===== Day Opening Candle Baseline (FIXED) =====
 isNewDay = ta.change(time("D")) != 0
 
-var float ceBase = na
-var float peBase = na
+var float ceBase       = na
+var float peBase       = na
 var float ceSecondBase = na
 var float peSecondBase = na
-var int   barsSinceDayStart = 0
+var int   dayCandleNo  = 0  // start at 0; incremented on confirmed close
 
-if barstate.isnew
-    if barstate.isfirst or isNewDay
-        barsSinceDayStart := 0
-        ceBase := na
-        peBase := na
-        ceSecondBase := na
-        peSecondBase := na
-    else
-        barsSinceDayStart += 1
+var bool resetNow = false
+resetNow := false
 
-if barstate.isconfirmed and barsSinceDayStart == 0 and na(ceBase)
-    ceBase := ceRawObv
-if barstate.isconfirmed and barsSinceDayStart == 0 and na(peBase)
-    peBase := peRawObv
+// Reset vars at the first bar of a new day (before any candle closes)
+if isNewDay
+    ceBase       := na
+    peBase       := na
+    ceSecondBase := na
+    peSecondBase := na
+    dayCandleNo  := 0
+    resetNow     := true
 
-if barstate.isconfirmed and barsSinceDayStart == 1 and na(ceSecondBase)
-    ceSecondBase := ceRawObv
-if barstate.isconfirmed and barsSinceDayStart == 1 and na(peSecondBase)
-    peSecondBase := peRawObv
+// On every confirmed (closed) candle, increment counter then capture bases
+if barstate.isconfirmed
+    dayCandleNo += 1
 
-ceDayDelta = ceRawObv - nz(ceBase, ceRawObv)
-peDayDelta = peRawObv - nz(peBase, peRawObv)
+    if dayCandleNo == 1
+        ceBase := ceRawObv
+        peBase := peRawObv
 
-ceFrom1stRaw = ceDayDelta
-peFrom1stRaw = peDayDelta
-ceDayRaw = ceFrom1stRaw
-peDayRaw = peFrom1stRaw
+    if dayCandleNo == 2
+        ceSecondBase := ceRawObv
+        peSecondBase := peRawObv
 
-ceFrom2ndRaw = not na(ceSecondBase) ? (ceRawObv - ceSecondBase) : na
-peFrom2ndRaw = not na(peSecondBase) ? (peRawObv - peSecondBase) : na
+plotshape(showResetDebug and resetNow, title="Daily Baseline Reset", style=shape.labeldown, location=location.top, color=color.yellow, textcolor=color.black, text="RESET", size=size.tiny)
 
-ceFrom1stPct = math.abs(nz(ceBase)) > 0 ? (ceFrom1stRaw / math.abs(ceBase)) * 100 : 0.0
-peFrom1stPct = math.abs(nz(peBase)) > 0 ? (peFrom1stRaw / math.abs(peBase)) * 100 : 0.0
-ceFrom2ndPct = not na(ceSecondBase) and math.abs(ceSecondBase) > 0 ? (ceFrom2ndRaw / math.abs(ceSecondBase)) * 100 : na
-peFrom2ndPct = not na(peSecondBase) and math.abs(peSecondBase) > 0 ? (peFrom2ndRaw / math.abs(peSecondBase)) * 100 : na
+// ===== Delta from Baselines =====
+ceDayDelta    = ceRawObv - nz(ceBase, ceRawObv)
+peDayDelta    = peRawObv - nz(peBase, peRawObv)
+
+ceFrom1stRaw  = ceDayDelta
+peFrom1stRaw  = peDayDelta
+ceDayRaw      = ceFrom1stRaw
+peDayRaw      = peFrom1stRaw
+
+ceFrom2ndRaw  = not na(ceSecondBase) ? (ceRawObv - ceSecondBase) : na
+peFrom2ndRaw  = not na(peSecondBase) ? (peRawObv - peSecondBase) : na
+
+ceFrom1stPct  = math.abs(nz(ceBase)) > 0 ? (ceFrom1stRaw / math.abs(ceBase)) * 100 : 0.0
+peFrom1stPct  = math.abs(nz(peBase)) > 0 ? (peFrom1stRaw / math.abs(peBase)) * 100 : 0.0
+ceFrom2ndPct  = not na(ceSecondBase) and math.abs(ceSecondBase) > 0 ? (ceFrom2ndRaw / math.abs(ceSecondBase)) * 100 : na
+peFrom2ndPct  = not na(peSecondBase) and math.abs(peSecondBase) > 0 ? (peFrom2ndRaw / math.abs(peSecondBase)) * 100 : na
 
 ceRawEma = ta.ema(ceFrom1stRaw, smoothLen)
 peRawEma = ta.ema(peFrom1stRaw, smoothLen)
@@ -123,7 +131,7 @@ plot(useRaw ? peRawEma : na, "PE OBV Raw", color=color.new(color.red, 0), linewi
 plot(not useRaw ? cePctEma : na, "CE OBV %", color=color.new(color.lime, 0), linewidth=2)
 plot(not useRaw ? pePctEma : na, "PE OBV %", color=color.new(color.red, 0), linewidth=2)
 
-// ===== Table: % Change from 1st and 2nd Candle =====
+// ===== Table =====
 f_pct_color(v) =>
     na(v) ? color.new(color.gray, 0) : v > 0 ? color.new(color.lime, 0) : v < 0 ? color.new(color.red, 0) : color.new(color.gray, 0)
 
