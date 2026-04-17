@@ -14,6 +14,12 @@ show_vwap       = input.bool(true,  "Show VWAP",       group=grp_vwap)
 show_vwap_bands = input.bool(false, "Show VWAP Bands", group=grp_vwap)
 vwap_mult       = input.float(1.0,  "Band Multiplier", group=grp_vwap, step=0.1)
 
+grp_rsi_st = "RSI & Supertrend"
+rsi_len    = input.int(14, "RSI Length", minval=1, group=grp_rsi_st)
+st_factor  = input.float(3.0, "Supertrend Factor", minval=0.1, step=0.1, group=grp_rsi_st)
+st_atr_len = input.int(10, "Supertrend ATR Length", minval=1, group=grp_rsi_st)
+show_supertrend = input.bool(true, "Show Supertrend on Chart", group=grp_rsi_st)
+
 grp_mtf = "MTF Table"
 show_mtf_table = input.bool(true,  "Show MTF Table", group=grp_mtf)
 tf_01 = input.timeframe("3",  "TF 1", group=grp_mtf)
@@ -48,6 +54,9 @@ vwap_var   = vwap_den != 0 ? (vwap_sq / vwap_den) - (vwap_val * vwap_val) : na
 vwap_upper = vwap_val + vwap_mult * math.sqrt(math.max(vwap_var, 0))
 vwap_lower = vwap_val - vwap_mult * math.sqrt(math.max(vwap_var, 0))
 
+// ===== Supertrend =====
+[st_line, st_dir] = ta.supertrend(st_factor, st_atr_len)
+
 // ===== EMA Plots =====
 plot(ema_01, "EMA 1", color=color.new(color.lime,    0), linewidth=1)
 plot(ema_02, "EMA 2", color=color.new(color.red,     0), linewidth=1)
@@ -58,6 +67,9 @@ plot(ema_04, "EMA 4", color=color.new(color.fuchsia, 0), linewidth=1)
 plot(show_vwap ? vwap_val : na,                          "VWAP",       color=color.new(color.orange, 0),  linewidth=2)
 plot(show_vwap and show_vwap_bands ? vwap_upper : na,    "VWAP Upper", color=color.new(color.orange, 50), linewidth=1)
 plot(show_vwap and show_vwap_bands ? vwap_lower : na,    "VWAP Lower", color=color.new(color.orange, 50), linewidth=1)
+
+// ===== Supertrend Plot =====
+plot(show_supertrend ? st_line : na, "Supertrend", color=st_dir < 0 ? color.lime : color.red, linewidth=2, style=plot.style_linebr)
 
 // ===== Cross Detection =====
 cross_01_up   = ta.crossover(ema_01,  ema_02)
@@ -76,6 +88,11 @@ plotshape(cross_02_down, "C2 Down", shape.triangledown, location.abovebar, color
 // ===== MTF EMA Helpers =====
 f_c1(_tf) => request.security(syminfo.tickerid, _tf, ta.ema(close, ema_01_len) > ta.ema(close, ema_02_len))
 f_c2(_tf) => request.security(syminfo.tickerid, _tf, ta.ema(close, ema_03_len) > ta.ema(close, ema_04_len))
+f_st_dir() =>
+    [_, _dir] = ta.supertrend(st_factor, st_atr_len)
+    _dir
+f_st_bull(_tf) =>
+    request.security(syminfo.tickerid, _tf, f_st_dir() < 0)
 
 c1_tf_01 = f_c1(tf_01)
 c1_tf_02 = f_c1(tf_02)
@@ -98,16 +115,30 @@ vwap_above_tf_01 = close_mtf_01 > vwap_mtf_01
 vwap_above_tf_02 = close_mtf_02 > vwap_mtf_02
 vwap_above_tf_03 = close_mtf_03 > vwap_mtf_03
 
+rsi_tf_01 = request.security(syminfo.tickerid, tf_01, ta.rsi(close, rsi_len))
+rsi_tf_02 = request.security(syminfo.tickerid, tf_02, ta.rsi(close, rsi_len))
+rsi_tf_03 = request.security(syminfo.tickerid, tf_03, ta.rsi(close, rsi_len))
+
+st_bull_tf_01 = f_st_bull(tf_01)
+st_bull_tf_02 = f_st_bull(tf_02)
+st_bull_tf_03 = f_st_bull(tf_03)
+
 // ===== MTF Table =====
 f_bool_cell(_tbl, _col, _row, _val, _t, _f) =>
     table.cell(_tbl, _col, _row, _val ? _t : _f,
          bgcolor=color.new(color.gray, 90),
          text_color=_val ? color.lime : color.red)
 
-var table mtf_tbl = table.new(position.top_right, 4, 4, border_width=1)
+f_rsi_cell(_tbl, _col, _row, _val) =>
+    _is_bull = _val >= 50
+    table.cell(_tbl, _col, _row, str.tostring(_val, "#.0"),
+         bgcolor=color.new(color.gray, 90),
+         text_color=_is_bull ? color.lime : color.red)
+
+var table mtf_tbl = table.new(position.top_right, 6, 4, border_width=1)
 
 if show_mtf_table and barstate.islast
-    for [col, txt] in array.from("TF", "Cross 1", "Cross 2", "VWAP")
+    for [col, txt] in array.from("TF", "Cross 1", "Cross 2", "VWAP", "RSI", "Supertrend")
         table.cell(mtf_tbl, col, 0, txt, bgcolor=color.new(color.silver, 20), text_color=color.black)
 
     for [i, tf] in array.from(tf_01, tf_02, tf_03)
@@ -124,6 +155,14 @@ if show_mtf_table and barstate.islast
     f_bool_cell(mtf_tbl, 3, 1, vwap_above_tf_01, "Above", "Below")
     f_bool_cell(mtf_tbl, 3, 2, vwap_above_tf_02, "Above", "Below")
     f_bool_cell(mtf_tbl, 3, 3, vwap_above_tf_03, "Above", "Below")
+
+    f_rsi_cell(mtf_tbl, 4, 1, rsi_tf_01)
+    f_rsi_cell(mtf_tbl, 4, 2, rsi_tf_02)
+    f_rsi_cell(mtf_tbl, 4, 3, rsi_tf_03)
+
+    f_bool_cell(mtf_tbl, 5, 1, st_bull_tf_01, "Bull", "Bear")
+    f_bool_cell(mtf_tbl, 5, 2, st_bull_tf_02, "Bull", "Bear")
+    f_bool_cell(mtf_tbl, 5, 3, st_bull_tf_03, "Bull", "Bear")
 
 // ===== Alerts =====
 alertcondition(cross_01_up,   "Cross 1 Up",   "EMA 1 crossed above EMA 2")
