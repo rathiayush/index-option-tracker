@@ -1,0 +1,132 @@
+//@version=5
+indicator("EMA Cross", overlay=true)
+
+// ===== Inputs =====
+grp_ema = "EMA Settings"
+ema_01_len = input.int(7,   "EMA 1",   step=1, group=grp_ema)
+ema_02_len = input.int(21,  "EMA 2",   step=1, group=grp_ema)
+ema_03_len = input.int(50,  "EMA 3",   step=1, group=grp_ema)
+ema_04_len = input.int(200, "EMA 4",   step=1, group=grp_ema)
+ema_src    = input.source(close, "Source", group=grp_ema)
+
+grp_vwap = "VWAP Settings"
+show_vwap       = input.bool(true,  "Show VWAP",       group=grp_vwap)
+show_vwap_bands = input.bool(false, "Show VWAP Bands", group=grp_vwap)
+vwap_mult       = input.float(1.0,  "Band Multiplier", group=grp_vwap, step=0.1)
+
+grp_mtf = "MTF Table"
+show_mtf_table = input.bool(true,  "Show MTF Table", group=grp_mtf)
+tf_01 = input.timeframe("3",  "TF 1", group=grp_mtf)
+tf_02 = input.timeframe("5",  "TF 2", group=grp_mtf)
+tf_03 = input.timeframe("15", "TF 3", group=grp_mtf)
+
+// ===== EMA =====
+ema_01 = ta.ema(ema_src, ema_01_len)
+ema_02 = ta.ema(ema_src, ema_02_len)
+ema_03 = ta.ema(ema_src, ema_03_len)
+ema_04 = ta.ema(ema_src, ema_04_len)
+
+// ===== VWAP (manual session-reset) =====
+isNewSession = ta.change(time("D")) != 0
+
+var float vwap_num = 0.0
+var float vwap_den = 0.0
+var float vwap_sq  = 0.0
+
+if isNewSession
+    vwap_num := 0.0
+    vwap_den := 0.0
+    vwap_sq  := 0.0
+
+typical  = (high + low + close) / 3
+vwap_num += typical * volume
+vwap_den += volume
+vwap_sq  += typical * typical * volume
+
+vwap_val   = vwap_den != 0 ? vwap_num / vwap_den : na
+vwap_var   = vwap_den != 0 ? (vwap_sq / vwap_den) - (vwap_val * vwap_val) : na
+vwap_upper = vwap_val + vwap_mult * math.sqrt(math.max(vwap_var, 0))
+vwap_lower = vwap_val - vwap_mult * math.sqrt(math.max(vwap_var, 0))
+
+// ===== EMA Plots =====
+plot(ema_01, "EMA 1", color=color.new(color.lime,    0), linewidth=1)
+plot(ema_02, "EMA 2", color=color.new(color.red,     0), linewidth=1)
+plot(ema_03, "EMA 3", color=color.new(color.blue,    0), linewidth=1)
+plot(ema_04, "EMA 4", color=color.new(color.fuchsia, 0), linewidth=1)
+
+// ===== VWAP Plots =====
+plot(show_vwap ? vwap_val : na,                          "VWAP",       color=color.new(color.orange, 0),  linewidth=2)
+plot(show_vwap and show_vwap_bands ? vwap_upper : na,    "VWAP Upper", color=color.new(color.orange, 50), linewidth=1)
+plot(show_vwap and show_vwap_bands ? vwap_lower : na,    "VWAP Lower", color=color.new(color.orange, 50), linewidth=1)
+
+// ===== Cross Detection =====
+cross_01_up   = ta.crossover(ema_01,  ema_02)
+cross_01_down = ta.crossunder(ema_01, ema_02)
+cross_02_up   = ta.crossover(ema_03,  ema_04)
+cross_02_down = ta.crossunder(ema_03, ema_04)
+
+plot(cross_01_up or cross_01_down ? ema_01 : na, "Cross 1 Marker", style=plot.style_cross, linewidth=3, color=ema_01 > ema_02 ? color.green : color.red)
+plot(cross_02_up or cross_02_down ? ema_03 : na, "Cross 2 Marker", style=plot.style_cross, linewidth=3, color=ema_03 > ema_04 ? color.green : color.red)
+
+plotshape(cross_01_up,   "C1 Up",   shape.triangleup,  location.belowbar, color.lime, size=size.normal, text="C1")
+plotshape(cross_01_down, "C1 Down", shape.triangledown, location.abovebar, color.red,  size=size.normal, text="C1")
+plotshape(cross_02_up,   "C2 Up",   shape.triangleup,  location.belowbar, color.lime, size=size.small,  text="C2")
+plotshape(cross_02_down, "C2 Down", shape.triangledown, location.abovebar, color.red,  size=size.small,  text="C2")
+
+// ===== MTF EMA Helpers =====
+f_c1(_tf) => request.security(syminfo.tickerid, _tf, ta.ema(close, ema_01_len) > ta.ema(close, ema_02_len))
+f_c2(_tf) => request.security(syminfo.tickerid, _tf, ta.ema(close, ema_03_len) > ta.ema(close, ema_04_len))
+
+c1_tf_01 = f_c1(tf_01)
+c1_tf_02 = f_c1(tf_02)
+c1_tf_03 = f_c1(tf_03)
+
+c2_tf_01 = f_c2(tf_01)
+c2_tf_02 = f_c2(tf_02)
+c2_tf_03 = f_c2(tf_03)
+
+// ===== MTF VWAP (same manual calc via security) =====
+vwap_mtf_01 = request.security(syminfo.tickerid, tf_01, vwap_val)
+vwap_mtf_02 = request.security(syminfo.tickerid, tf_02, vwap_val)
+vwap_mtf_03 = request.security(syminfo.tickerid, tf_03, vwap_val)
+
+close_mtf_01 = request.security(syminfo.tickerid, tf_01, close)
+close_mtf_02 = request.security(syminfo.tickerid, tf_02, close)
+close_mtf_03 = request.security(syminfo.tickerid, tf_03, close)
+
+vwap_above_tf_01 = close_mtf_01 > vwap_mtf_01
+vwap_above_tf_02 = close_mtf_02 > vwap_mtf_02
+vwap_above_tf_03 = close_mtf_03 > vwap_mtf_03
+
+// ===== MTF Table =====
+f_bool_cell(_tbl, _col, _row, _val, _t, _f) =>
+    table.cell(_tbl, _col, _row, _val ? _t : _f,
+         bgcolor=color.new(color.gray, 90),
+         text_color=_val ? color.lime : color.red)
+
+var table mtf_tbl = table.new(position.top_right, 4, 4, border_width=1)
+
+if show_mtf_table and barstate.islast
+    for [col, txt] in array.from("TF", "Cross 1", "Cross 2", "VWAP")
+        table.cell(mtf_tbl, col, 0, txt, bgcolor=color.new(color.silver, 20), text_color=color.black)
+
+    for [i, tf] in array.from(tf_01, tf_02, tf_03)
+        table.cell(mtf_tbl, 0, i + 1, tf, bgcolor=color.new(color.gray, 85), text_color=color.white)
+
+    f_bool_cell(mtf_tbl, 1, 1, c1_tf_01, "▲ Bull", "▼ Bear")
+    f_bool_cell(mtf_tbl, 1, 2, c1_tf_02, "▲ Bull", "▼ Bear")
+    f_bool_cell(mtf_tbl, 1, 3, c1_tf_03, "▲ Bull", "▼ Bear")
+
+    f_bool_cell(mtf_tbl, 2, 1, c2_tf_01, "▲ Bull", "▼ Bear")
+    f_bool_cell(mtf_tbl, 2, 2, c2_tf_02, "▲ Bull", "▼ Bear")
+    f_bool_cell(mtf_tbl, 2, 3, c2_tf_03, "▲ Bull", "▼ Bear")
+
+    f_bool_cell(mtf_tbl, 3, 1, vwap_above_tf_01, "Above", "Below")
+    f_bool_cell(mtf_tbl, 3, 2, vwap_above_tf_02, "Above", "Below")
+    f_bool_cell(mtf_tbl, 3, 3, vwap_above_tf_03, "Above", "Below")
+
+// ===== Alerts =====
+alertcondition(cross_01_up,   "Cross 1 Up",   "EMA 1 crossed above EMA 2")
+alertcondition(cross_01_down, "Cross 1 Down",  "EMA 1 crossed below EMA 2")
+alertcondition(cross_02_up,   "Cross 2 Up",   "EMA 3 crossed above EMA 4")
+alertcondition(cross_02_down, "Cross 2 Down",  "EMA 3 crossed below EMA 4")
