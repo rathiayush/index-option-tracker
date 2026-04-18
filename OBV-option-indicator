@@ -2,7 +2,7 @@
 indicator("OBV CE/PE 10-Strike Baseline Graph", overlay=false, dynamic_requests=true)
 
 // ===== Inputs =====
-indexName    = input.string("NIFTY", "Index Name", options=["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"])
+indexName    = input.string("NIFTY", "Index Name", options=["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "BSX", "BANKEX"])
 expiryCode   = input.string("23MAR", "Expiry Code (example: 23MAR)")
 atmStrike    = input.int(23500, "ATM Strike")
 strikeStep   = input.int(50, "Strike Step")
