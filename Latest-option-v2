@@ -1,4 +1,3 @@
-
 //@version=5
 indicator("Dynamic NIFTY Options Dashboard (5 Levels) + SPOT MACD + OBV Bias", overlay=true)
 
@@ -23,6 +22,7 @@ showMacd = input.bool(false, "Show SPOT MACD Columns")
 autoATM        = input.bool(true, "Auto ATM from SPOT", tooltip="When ON, ATM is recalculated from NIFTY SPOT every bar.")
 refreshWarnPts = input.int(100, "Refresh Warning (pts drift)", minval=50, step=50)
 showSignalTags = input.bool(true, "Show Buy/Sell Signal Tags on Chart")
+showCurrentDayOnlySignals = input.bool(false, "Show Only Current Day Signal Tags")
 showTable       = input.bool(true, "Show Dashboard Table")
 
 // ================= NIFTY SPOT =================
@@ -331,6 +331,22 @@ base_step = nz(ta.atr(14)) * (spacerMult * 0.45)
 min_step  = n_close * 0.0015
 float y_step = math.max(base_step, min_step)
 
+currDayKey = year(time) * 10000 + month(time) * 100 + dayofmonth(time)
+var int activeSignalDayKey = na
+var label[] activeDaySignalLabels = array.new_label()
+
+if showCurrentDayOnlySignals
+    if na(activeSignalDayKey)
+        activeSignalDayKey := currDayKey
+    if currDayKey != activeSignalDayKey
+        if array.size(activeDaySignalLabels) > 0
+            for i = 0 to array.size(activeDaySignalLabels) - 1
+                label.delete(array.get(activeDaySignalLabels, i))
+        array.clear(activeDaySignalLabels)
+        activeSignalDayKey := currDayKey
+else
+    activeSignalDayKey := currDayKey
+
 // ── JSON alert helper ──
 //f_json(txt) =>
 //    sanitized = str.replace_all(txt, "\n", "\\n")
@@ -430,7 +446,9 @@ if cb_txt != "" and showSignalTags
     last_up_pos := bar_index
     float plot_y = low - (y_step * (up_lvl + 1))
     cb_tip = "CE BUY signals (" + str.tostring(cb_count) + ")\n" + cb_txt
-    label.new(bar_index, plot_y, text=" 🟦B" + str.tostring(cb_count) + " ", tooltip=cb_tip, style=label.style_label_up, color=color.new(#1565c0, 0), textcolor=color.white, size=size.small)
+    cb_label = label.new(bar_index, plot_y, text=" 🟦B" + str.tostring(cb_count) + " ", tooltip=cb_tip, style=label.style_label_up, color=color.new(#1565c0, 0), textcolor=color.white, size=size.small)
+    if showCurrentDayOnlySignals
+        array.push(activeDaySignalLabels, cb_label)
 
 // ── CE SELL labels ──
 string cs_txt = ""
@@ -507,7 +525,9 @@ if cs_txt != "" and showSignalTags
     last_down_pos := bar_index
     float plot_y = high + (y_step * (down_lvl + 1))
     cs_tip = "CE SELL signals (" + str.tostring(cs_count) + ")\n" + cs_txt
-    label.new(bar_index, plot_y, text=" 🟦S" + str.tostring(cs_count) + " ", tooltip=cs_tip, style=label.style_label_down, color=color.new(#1565c0, 0), textcolor=color.white, size=size.small)
+    cs_label = label.new(bar_index, plot_y, text=" 🟦S" + str.tostring(cs_count) + " ", tooltip=cs_tip, style=label.style_label_down, color=color.new(#1565c0, 0), textcolor=color.white, size=size.small)
+    if showCurrentDayOnlySignals
+        array.push(activeDaySignalLabels, cs_label)
 
 // ── PE BUY labels ──
 string pb_txt = ""
@@ -577,7 +597,9 @@ if pb_txt != "" and showSignalTags
     last_up_pos := bar_index
     float plot_y = low - (y_step * (up_lvl + 1))
     pb_tip = "PE BUY signals (" + str.tostring(pb_count) + ")\n" + pb_txt
-    label.new(bar_index, plot_y, text=" 🟪B" + str.tostring(pb_count) + " ", tooltip=pb_tip, style=label.style_label_up, color=color.new(#ad1457, 0), textcolor=color.white, size=size.small)
+    pb_label = label.new(bar_index, plot_y, text=" 🟪B" + str.tostring(pb_count) + " ", tooltip=pb_tip, style=label.style_label_up, color=color.new(#ad1457, 0), textcolor=color.white, size=size.small)
+    if showCurrentDayOnlySignals
+        array.push(activeDaySignalLabels, pb_label)
 
 // ── PE SELL labels ──
 string ps_txt = ""
@@ -647,4 +669,6 @@ if ps_txt != "" and showSignalTags
     last_down_pos := bar_index
     float plot_y = high + (y_step * (down_lvl + 1))
     ps_tip = "PE SELL signals (" + str.tostring(ps_count) + ")\n" + ps_txt
-    label.new(bar_index, plot_y, text=" 🟪S" + str.tostring(ps_count) + " ", tooltip=ps_tip, style=label.style_label_down, color=color.new(#ad1457, 0), textcolor=color.white, size=size.small)
+    ps_label = label.new(bar_index, plot_y, text=" 🟪S" + str.tostring(ps_count) + " ", tooltip=ps_tip, style=label.style_label_down, color=color.new(#ad1457, 0), textcolor=color.white, size=size.small)
+    if showCurrentDayOnlySignals
+        array.push(activeDaySignalLabels, ps_label)
