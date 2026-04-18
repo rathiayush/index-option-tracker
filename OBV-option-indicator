@@ -123,6 +123,31 @@ cePctEma = ta.ema(ceFrom1stPct, smoothLen)
 pePctEma = ta.ema(peFrom1stPct, smoothLen)
 
 useRaw = displayMode == "Raw"
+ceActive = useRaw ? ceRawEma : cePctEma
+peActive = useRaw ? peRawEma : pePctEma
+crossUp = ta.crossover(ceActive, peActive)
+crossDown = ta.crossunder(ceActive, peActive)
+ceCrossText = crossUp ? "Bull Cross" : crossDown ? "Bear Cross" : "-"
+peCrossText = crossDown ? "Bull Cross" : crossUp ? "Bear Cross" : "-"
+ceCrossColor = ceCrossText == "Bull Cross" ? color.lime : ceCrossText == "Bear Cross" ? color.red : color.gray
+peCrossColor = peCrossText == "Bull Cross" ? color.lime : peCrossText == "Bear Cross" ? color.red : color.gray
+
+f_json(txt) =>
+    stage = "crossover"
+    sanitized = str.replace_all(txt, "\n", "\\n")
+    sanitized := str.replace_all(sanitized, '"', '\\"')
+    payloadText = sanitized + " | TF: " + timeframe.period
+    '{"source":"tradingview","chat_id":"-1003533948678","stage":"' + stage + '","text":"' + payloadText + '","message":"' + payloadText + '","timeframe":"' + timeframe.period + '","timestamp":"' + str.tostring(time) + '"}'
+
+if barstate.isconfirmed and crossUp
+    modeTxt = useRaw ? "Raw" : "Percent"
+    msg = "CE/PE CROSS UP\n" + indexName + " " + modeTxt + "\nGreen crossed above Red"
+    alert(f_json(msg), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and crossDown
+    modeTxt = useRaw ? "Raw" : "Percent"
+    msg = "CE/PE CROSS DOWN\n" + indexName + " " + modeTxt + "\nGreen crossed below Red"
+    alert(f_json(msg), alert.freq_once_per_bar_close)
 
 // ===== Plot =====
 plot(0, "Opening Candle Baseline", color=color.new(color.gray, 20), linewidth=1, style=plot.style_line)
@@ -139,58 +164,29 @@ f_fmt_km(v) =>
     av = math.abs(v)
     av >= 1000000 ? str.tostring(v / 1000000, "#.00") + "M" : av >= 1000 ? str.tostring(v / 1000, "#.00") + "K" : str.tostring(v, "#.0")
 
-var table t = table.new(position.top_right, 3, 8, border_width=1)
+var table t = table.new(position.top_right, 3, 10, border_width=1)
 
 if barstate.islast and showTable
     table.cell(t, 0, 0, "Metric", bgcolor=color.new(color.silver, 15), text_color=color.black)
     table.cell(t, 1, 0, "CE", bgcolor=color.new(color.silver, 15), text_color=color.black)
     table.cell(t, 2, 0, "PE", bgcolor=color.new(color.silver, 15), text_color=color.black)
 
-    if useRaw
-        table.cell(t, 0, 1, "Raw from 1st", bgcolor=color.new(color.gray, 85), text_color=color.white)
-        table.cell(t, 1, 1, f_fmt_km(ceFrom1stRaw), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom1stRaw))
-        table.cell(t, 2, 1, f_fmt_km(peFrom1stRaw), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom1stRaw))
+    table.cell(t, 0, 1, "1st Candle Raw", bgcolor=color.new(color.gray, 85), text_color=color.white)
+    table.cell(t, 1, 1, f_fmt_km(ceBase), bgcolor=color.new(color.gray, 90), text_color=color.white)
+    table.cell(t, 2, 1, f_fmt_km(peBase), bgcolor=color.new(color.gray, 90), text_color=color.white)
 
-        table.cell(t, 0, 2, "Raw from 2nd", bgcolor=color.new(color.gray, 85), text_color=color.white)
-        table.cell(t, 1, 2, na(ceFrom2ndRaw) ? "-" : f_fmt_km(ceFrom2ndRaw), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom2ndRaw))
-        table.cell(t, 2, 2, na(peFrom2ndRaw) ? "-" : f_fmt_km(peFrom2ndRaw), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom2ndRaw))
+    table.cell(t, 0, 2, "2nd Candle Raw", bgcolor=color.new(color.gray, 85), text_color=color.white)
+    table.cell(t, 1, 2, na(ceSecondBase) ? "Waiting" : f_fmt_km(ceSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(ceSecondBase) ? color.orange : color.white)
+    table.cell(t, 2, 2, na(peSecondBase) ? "Waiting" : f_fmt_km(peSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(peSecondBase) ? color.orange : color.white)
 
-        table.cell(t, 0, 3, "Smoothed Raw", bgcolor=color.new(color.gray, 85), text_color=color.white)
-        table.cell(t, 1, 3, f_fmt_km(ceRawEma), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceRawEma))
-        table.cell(t, 2, 3, f_fmt_km(peRawEma), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peRawEma))
+    table.cell(t, 0, 3, "Current Raw", bgcolor=color.new(color.gray, 85), text_color=color.white)
+    table.cell(t, 1, 3, f_fmt_km(ceRawObv), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceDayRaw))
+    table.cell(t, 2, 3, f_fmt_km(peRawObv), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peDayRaw))
 
-        table.cell(t, 0, 4, "% from 1st", bgcolor=color.new(color.gray, 85), text_color=color.white)
-        table.cell(t, 1, 4, str.tostring(ceFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom1stPct))
-        table.cell(t, 2, 4, str.tostring(peFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom1stPct))
+    table.cell(t, 0, 4, "% changed from 1st candle", bgcolor=color.new(color.gray, 85), text_color=color.white)
+    table.cell(t, 1, 4, str.tostring(ceFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom1stPct))
+    table.cell(t, 2, 4, str.tostring(peFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom1stPct))
 
-        table.cell(t, 0, 5, "Current Raw", bgcolor=color.new(color.gray, 85), text_color=color.white)
-        table.cell(t, 1, 5, f_fmt_km(ceRawObv), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceDayRaw))
-        table.cell(t, 2, 5, f_fmt_km(peRawObv), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peDayRaw))
-    else
-        table.cell(t, 0, 1, "% from 1st", bgcolor=color.new(color.gray, 85), text_color=color.white)
-        table.cell(t, 1, 1, str.tostring(ceFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom1stPct))
-        table.cell(t, 2, 1, str.tostring(peFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom1stPct))
-
-        table.cell(t, 0, 2, "% from 2nd", bgcolor=color.new(color.gray, 85), text_color=color.white)
-        table.cell(t, 1, 2, na(ceFrom2ndPct) ? "-" : str.tostring(ceFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom2ndPct))
-        table.cell(t, 2, 2, na(peFrom2ndPct) ? "-" : str.tostring(peFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom2ndPct))
-
-        table.cell(t, 0, 3, "Smoothed %", bgcolor=color.new(color.gray, 85), text_color=color.white)
-        table.cell(t, 1, 3, str.tostring(cePctEma, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(cePctEma))
-        table.cell(t, 2, 3, str.tostring(pePctEma, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(pePctEma))
-
-        table.cell(t, 0, 4, "Current Raw", bgcolor=color.new(color.gray, 85), text_color=color.white)
-        table.cell(t, 1, 4, f_fmt_km(ceRawObv), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceDayRaw))
-        table.cell(t, 2, 4, f_fmt_km(peRawObv), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peDayRaw))
-
-        table.cell(t, 0, 5, "", bgcolor=color.new(color.gray, 90), text_color=color.white)
-        table.cell(t, 1, 5, "", bgcolor=color.new(color.gray, 90), text_color=color.white)
-        table.cell(t, 2, 5, "", bgcolor=color.new(color.gray, 90), text_color=color.white)
-
-    table.cell(t, 0, 6, "1st Base", bgcolor=color.new(color.gray, 85), text_color=color.white)
-    table.cell(t, 1, 6, f_fmt_km(ceBase), bgcolor=color.new(color.gray, 90), text_color=color.white)
-    table.cell(t, 2, 6, f_fmt_km(peBase), bgcolor=color.new(color.gray, 90), text_color=color.white)
-
-    table.cell(t, 0, 7, "2nd Base", bgcolor=color.new(color.gray, 85), text_color=color.white)
-    table.cell(t, 1, 7, na(ceSecondBase) ? "Waiting" : f_fmt_km(ceSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(ceSecondBase) ? color.orange : color.white)
-    table.cell(t, 2, 7, na(peSecondBase) ? "Waiting" : f_fmt_km(peSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(peSecondBase) ? color.orange : color.white)
+    table.cell(t, 0, 5, "% changed from 2nd candle", bgcolor=color.new(color.gray, 85), text_color=color.white)
+    table.cell(t, 1, 5, na(ceFrom2ndPct) ? "-" : str.tostring(ceFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom2ndPct))
+    table.cell(t, 2, 5, na(peFrom2ndPct) ? "-" : str.tostring(peFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom2ndPct))
