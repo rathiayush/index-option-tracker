@@ -3,8 +3,8 @@ indicator("EMA Cross", overlay=true)
 
 // ===== Inputs =====
 grp_ema = "EMA Settings"
-ema_01_len = input.int(7,   "EMA 1",   step=1, group=grp_ema)
-ema_02_len = input.int(21,  "EMA 2",   step=1, group=grp_ema)
+ema_01_len = input.int(9,   "EMA 1",   step=1, group=grp_ema)
+ema_02_len = input.int(26,  "EMA 2",   step=1, group=grp_ema)
 ema_03_len = input.int(50,  "EMA 3",   step=1, group=grp_ema)
 ema_04_len = input.int(200, "EMA 4",   step=1, group=grp_ema)
 ema_src    = input.source(close, "Source", group=grp_ema)
@@ -138,7 +138,7 @@ f_rsi_cell(_tbl, _col, _row, _val) =>
 var table mtf_tbl = table.new(position.top_right, 6, 4, border_width=1)
 
 if show_mtf_table and barstate.islast
-    for [col, txt] in array.from("TF", "Cross 1", "Cross 2", "VWAP", "RSI", "Supertrend")
+    for [col, txt] in array.from("TF", "Cross 1", "VWAP", "Supertrend", "RSI", "Cross 2")
         table.cell(mtf_tbl, col, 0, txt, bgcolor=color.new(color.silver, 20), text_color=color.black)
 
     for [i, tf] in array.from(tf_01, tf_02, tf_03)
@@ -148,24 +148,63 @@ if show_mtf_table and barstate.islast
     f_bool_cell(mtf_tbl, 1, 2, c1_tf_02, "▲ Bull", "▼ Bear")
     f_bool_cell(mtf_tbl, 1, 3, c1_tf_03, "▲ Bull", "▼ Bear")
 
-    f_bool_cell(mtf_tbl, 2, 1, c2_tf_01, "▲ Bull", "▼ Bear")
-    f_bool_cell(mtf_tbl, 2, 2, c2_tf_02, "▲ Bull", "▼ Bear")
-    f_bool_cell(mtf_tbl, 2, 3, c2_tf_03, "▲ Bull", "▼ Bear")
+    f_bool_cell(mtf_tbl, 2, 1, vwap_above_tf_01, "Above", "Below")
+    f_bool_cell(mtf_tbl, 2, 2, vwap_above_tf_02, "Above", "Below")
+    f_bool_cell(mtf_tbl, 2, 3, vwap_above_tf_03, "Above", "Below")
 
-    f_bool_cell(mtf_tbl, 3, 1, vwap_above_tf_01, "Above", "Below")
-    f_bool_cell(mtf_tbl, 3, 2, vwap_above_tf_02, "Above", "Below")
-    f_bool_cell(mtf_tbl, 3, 3, vwap_above_tf_03, "Above", "Below")
+    f_bool_cell(mtf_tbl, 3, 1, st_bull_tf_01, "Bull", "Bear")
+    f_bool_cell(mtf_tbl, 3, 2, st_bull_tf_02, "Bull", "Bear")
+    f_bool_cell(mtf_tbl, 3, 3, st_bull_tf_03, "Bull", "Bear")
 
     f_rsi_cell(mtf_tbl, 4, 1, rsi_tf_01)
     f_rsi_cell(mtf_tbl, 4, 2, rsi_tf_02)
     f_rsi_cell(mtf_tbl, 4, 3, rsi_tf_03)
 
-    f_bool_cell(mtf_tbl, 5, 1, st_bull_tf_01, "Bull", "Bear")
-    f_bool_cell(mtf_tbl, 5, 2, st_bull_tf_02, "Bull", "Bear")
-    f_bool_cell(mtf_tbl, 5, 3, st_bull_tf_03, "Bull", "Bear")
+    f_bool_cell(mtf_tbl, 5, 1, c2_tf_01, "▲ Bull", "▼ Bear")
+    f_bool_cell(mtf_tbl, 5, 2, c2_tf_02, "▲ Bull", "▼ Bear")
+    f_bool_cell(mtf_tbl, 5, 3, c2_tf_03, "▲ Bull", "▼ Bear")
 
 // ===== Alerts =====
-alertcondition(cross_01_up,   "Cross 1 Up",   "EMA 1 crossed above EMA 2")
-alertcondition(cross_01_down, "Cross 1 Down",  "EMA 1 crossed below EMA 2")
-alertcondition(cross_02_up,   "Cross 2 Up",   "EMA 3 crossed above EMA 4")
-alertcondition(cross_02_down, "Cross 2 Down",  "EMA 3 crossed below EMA 4")
+f_flag(_v, _g, _r) =>
+    _v ? _g : _r
+
+f_row_text(_tf, _c1, _vwap_above, _st_bull, _rsi, _c2) =>
+    "| " + _tf +
+      " | " + f_flag(_c1, "🟢 Bull", "🔴 Bear") +
+      " | " + f_flag(_vwap_above, "🟢 Above", "🔴 Below") +
+      " | " + f_flag(_st_bull, "🟢 Bull", "🔴 Bear") +
+      " | " + str.tostring(_rsi, "#.0") + " " + f_flag(_rsi >= 50, "🟢 Bull", "🔴 Bear") +
+      " | " + f_flag(_c2, "🟢 Bull", "🔴 Bear") + " |"
+
+f_json_escape(_txt) =>
+    _t = str.replace_all(_txt, "\n", "\\n")
+    str.replace_all(_t, '"', '\\"')
+
+f_webhook_payload(_html_text) =>
+    '{"chat_id":"-1003533948678","parse_mode":"HTML","text":"' + f_json_escape(_html_text) + '"}'
+
+st_flip = ta.change(st_dir) != 0
+
+if barstate.isconfirmed and (cross_01_up or cross_01_down or cross_02_up or cross_02_down or st_flip)
+    event = ""
+    if cross_01_up
+        event += (event == "" ? "" : ", ") + "C1 UP"
+    if cross_01_down
+        event += (event == "" ? "" : ", ") + "C1 DOWN"
+    if cross_02_up
+        event += (event == "" ? "" : ", ") + "C2 UP"
+    if cross_02_down
+        event += (event == "" ? "" : ", ") + "C2 DOWN"
+    if st_flip
+        event += (event == "" ? "" : ", ") + "ST FLIP"
+
+    msg_html = "<b>EMA/VWAP/ST ALERT</b>\n" +
+      "<b>" + syminfo.ticker + "</b> | TF:" + timeframe.period + "\n" +
+      "<b>Event:</b> " + event + "\n\n" +
+      "<pre>| TF | Cross1 | VWAP | Supertrend | RSI | Cross2 |\n" +
+      "|----|--------|------|------------|-----|--------|\n" +
+      f_row_text(tf_01, c1_tf_01, vwap_above_tf_01, st_bull_tf_01, rsi_tf_01, c2_tf_01) + "\n" +
+      f_row_text(tf_02, c1_tf_02, vwap_above_tf_02, st_bull_tf_02, rsi_tf_02, c2_tf_02) + "\n" +
+      f_row_text(tf_03, c1_tf_03, vwap_above_tf_03, st_bull_tf_03, rsi_tf_03, c2_tf_03) + "</pre>"
+
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
