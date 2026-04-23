@@ -1,5 +1,5 @@
 //@version=5
-indicator("OBV CE/PE 10-Strike Baseline Graph", overlay=false, dynamic_requests=true)
+indicator("OBV CE/PE 14-Strike Baseline Graph", overlay=false, dynamic_requests=true)
 
 // ===== Inputs =====
 indexName    = input.string("NIFTY", "Index Name", options=["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "BSX", "BANKEX"])
@@ -8,6 +8,7 @@ atmStrike    = input.int(23500, "ATM Strike")
 strikeStep   = input.int(50, "Strike Step")
 smoothLen    = input.int(9, "OBV EMA Length", minval=1)
 displayMode  = input.string("Raw", "Display Mode", options=["Raw", "Percent"])
+rawChartUnit = input.string("K", "Raw Chart Unit", options=["K", "M"])
 showTable    = input.bool(true, "Show % Change Table")
 showResetDebug = input.bool(false, "Show Daily Reset Marker")
 
@@ -18,7 +19,9 @@ f_sym(_strike, _isCall) =>
 f_obv(_sym) =>
     request.security(_sym, timeframe.period, ta.cum(math.sign(ta.change(close)) * volume))
 
-// ===== Strike Aggregation (Fixed 10 CE + 10 PE) =====
+// ===== Strike Aggregation (Fixed 14 CE + 14 PE) =====
+ce_s7 = atmStrike - (7 * strikeStep)
+ce_s6 = atmStrike - (6 * strikeStep)
 ce_s5 = atmStrike - (5 * strikeStep)
 ce_s4 = atmStrike - (4 * strikeStep)
 ce_s3 = atmStrike - (3 * strikeStep)
@@ -29,7 +32,11 @@ ce_p1 = atmStrike + (1 * strikeStep)
 ce_p2 = atmStrike + (2 * strikeStep)
 ce_p3 = atmStrike + (3 * strikeStep)
 ce_p4 = atmStrike + (4 * strikeStep)
+ce_p5 = atmStrike + (5 * strikeStep)
+ce_p6 = atmStrike + (6 * strikeStep)
 
+pe_s7 = atmStrike - (7 * strikeStep)
+pe_s6 = atmStrike - (6 * strikeStep)
 pe_s5 = atmStrike - (5 * strikeStep)
 pe_s4 = atmStrike - (4 * strikeStep)
 pe_s3 = atmStrike - (3 * strikeStep)
@@ -40,8 +47,12 @@ pe_p1 = atmStrike + (1 * strikeStep)
 pe_p2 = atmStrike + (2 * strikeStep)
 pe_p3 = atmStrike + (3 * strikeStep)
 pe_p4 = atmStrike + (4 * strikeStep)
+pe_p5 = atmStrike + (5 * strikeStep)
+pe_p6 = atmStrike + (6 * strikeStep)
 
 ceRawObv = 0.0
+ceRawObv += nz(f_obv(f_sym(ce_s7, true)))
+ceRawObv += nz(f_obv(f_sym(ce_s6, true)))
 ceRawObv += nz(f_obv(f_sym(ce_s5, true)))
 ceRawObv += nz(f_obv(f_sym(ce_s4, true)))
 ceRawObv += nz(f_obv(f_sym(ce_s3, true)))
@@ -52,8 +63,12 @@ ceRawObv += nz(f_obv(f_sym(ce_p1, true)))
 ceRawObv += nz(f_obv(f_sym(ce_p2, true)))
 ceRawObv += nz(f_obv(f_sym(ce_p3, true)))
 ceRawObv += nz(f_obv(f_sym(ce_p4, true)))
+ceRawObv += nz(f_obv(f_sym(ce_p5, true)))
+ceRawObv += nz(f_obv(f_sym(ce_p6, true)))
 
 peRawObv = 0.0
+peRawObv += nz(f_obv(f_sym(pe_s7, false)))
+peRawObv += nz(f_obv(f_sym(pe_s6, false)))
 peRawObv += nz(f_obv(f_sym(pe_s5, false)))
 peRawObv += nz(f_obv(f_sym(pe_s4, false)))
 peRawObv += nz(f_obv(f_sym(pe_s3, false)))
@@ -64,6 +79,8 @@ peRawObv += nz(f_obv(f_sym(pe_p1, false)))
 peRawObv += nz(f_obv(f_sym(pe_p2, false)))
 peRawObv += nz(f_obv(f_sym(pe_p3, false)))
 peRawObv += nz(f_obv(f_sym(pe_p4, false)))
+peRawObv += nz(f_obv(f_sym(pe_p5, false)))
+peRawObv += nz(f_obv(f_sym(pe_p6, false)))
 
 // ===== Day Opening Candle Baseline (FIXED) =====
 isNewDay = ta.change(time("D")) != 0
@@ -125,6 +142,11 @@ pePctEma = ta.ema(peFrom1stPct, smoothLen)
 useRaw = displayMode == "Raw"
 ceActive = useRaw ? ceRawEma : cePctEma
 peActive = useRaw ? peRawEma : pePctEma
+
+rawAbsMax = math.max(math.abs(ceRawEma), math.abs(peRawEma))
+rawDiv = rawChartUnit == "M" ? 1000000.0 : 1000.0
+ceRawChart = ceRawEma / rawDiv
+peRawChart = peRawEma / rawDiv
 crossUp = ta.crossover(ceActive, peActive)
 crossDown = ta.crossunder(ceActive, peActive)
 ceCrossText = crossUp ? "Bull Cross" : crossDown ? "Bear Cross" : "-"
@@ -159,8 +181,8 @@ if barstate.isconfirmed and crossDown
 
 // ===== Plot =====
 plot(0, "Opening Candle Baseline", color=color.new(color.gray, 20), linewidth=1, style=plot.style_line)
-plot(useRaw ? ceRawEma : na, "CE OBV Raw", color=color.new(color.lime, 0), linewidth=2)
-plot(useRaw ? peRawEma : na, "PE OBV Raw", color=color.new(color.red, 0), linewidth=2)
+plot(useRaw ? ceRawChart : na, "CE OBV Raw", color=color.new(color.lime, 0), linewidth=2)
+plot(useRaw ? peRawChart : na, "PE OBV Raw", color=color.new(color.red, 0), linewidth=2)
 plot(not useRaw ? cePctEma : na, "CE OBV %", color=color.new(color.lime, 0), linewidth=2)
 plot(not useRaw ? pePctEma : na, "PE OBV %", color=color.new(color.red, 0), linewidth=2)
 
