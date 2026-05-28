@@ -1,0 +1,308 @@
+//@version=5
+indicator("Net Volume CE/PE 14-Strike Baseline Graph with Delta Weighting", overlay=false, dynamic_requests=true)
+
+// ===== Inputs =====
+indexName    = input.string("NIFTY", "Index Name", options=["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "BSX", "BANKEX"])
+expiryCode   = input.string("23MAR", "Expiry Code (example: 23MAR)")
+atmStrike    = input.int(23500, "ATM Strike")
+strikeStep   = input.int(50, "Strike Step")
+smoothLen    = input.int(9, "Net Vol EMA Length", minval=1)
+displayMode  = input.string("Raw", "Display Mode", options=["Raw", "Percent"])
+rawChartUnit = input.string("K", "Raw Chart Unit", options=["K", "M"])
+showTable    = input.bool(true, "Show % Change Table")
+showDayChangeTable = input.bool(true, "Show Day vs Current Table")
+showResetDebug = input.bool(false, "Show Daily Reset Marker")
+
+// ===== Delta-Weighting Toggle =====
+useDeltaWeighting = input.bool(true, "Use Delta Weighting (Volume × Delta)", tooltip="When ON, net volume is multiplied by option delta (0-1 for calls, -1-0 for puts)")
+
+// ===== Auto-fetch Underlying Price (for delta calculation) =====
+f_underlying_sym(_name) =>
+    switch _name
+        "NIFTY"      => "NSE:NIFTY"
+        "BANKNIFTY"  => "NSE:BANKNIFTY"
+        "FINNIFTY"   => "NSE:FINNIFTY"
+        "MIDCPNIFTY" => "NSE:MIDCPNIFTY"
+        "BSX"        => "BSE:SENSEX"
+        "BANKEX"     => "BSE:BANKEX"
+        => "NSE:NIFTY"
+
+underlyingSym   = f_underlying_sym(indexName)
+underlyingPrice = request.security(underlyingSym, timeframe.period, close)
+
+// ===== Helpers =====
+f_sym(_strike, _isCall) =>
+    indexName + expiryCode + (_isCall ? "C" : "P") + str.tostring(_strike)
+
+// ===== Delta Calculation =====
+f_get_delta(_strike, _isCall, _spot) =>
+    moneyness = (_strike - _spot) / _spot
+    if _isCall
+        1 / (1 + math.exp(-1.7 * -moneyness * 5))
+    else
+        -1 / (1 + math.exp(-1.7 * moneyness * 5))
+
+// Net Volume: volume * price change direction & magnitude
+// Positive = net buying pressure, Negative = net selling pressure
+f_netvol_standard() =>
+    ta.cum(volume * ta.change(close))
+
+f_netvol_with_delta(_delta) =>
+    ta.cum(volume * ta.change(close) * _delta)
+
+f_nv(_sym, _strike, _isCall, _spot) =>
+    deltaWeight = useDeltaWeighting ? math.abs(f_get_delta(_strike, _isCall, _spot)) : 1.0
+    request.security(_sym, timeframe.period, useDeltaWeighting ? f_netvol_with_delta(deltaWeight) : f_netvol_standard(), lookahead=barmerge.lookahead_off)
+// Get current spot for delta calculation
+currentSpot = underlyingPrice
+
+// ===== Strike Aggregation (Fixed 14 CE + 14 PE) =====
+ce_s7 = atmStrike - (7 * strikeStep)
+ce_s6 = atmStrike - (6 * strikeStep)
+ce_s5 = atmStrike - (5 * strikeStep)
+ce_s4 = atmStrike - (4 * strikeStep)
+ce_s3 = atmStrike - (3 * strikeStep)
+ce_s2 = atmStrike - (2 * strikeStep)
+ce_s1 = atmStrike - (1 * strikeStep)
+ce_s0 = atmStrike
+ce_p1 = atmStrike + (1 * strikeStep)
+ce_p2 = atmStrike + (2 * strikeStep)
+ce_p3 = atmStrike + (3 * strikeStep)
+ce_p4 = atmStrike + (4 * strikeStep)
+ce_p5 = atmStrike + (5 * strikeStep)
+ce_p6 = atmStrike + (6 * strikeStep)
+
+pe_s7 = atmStrike - (7 * strikeStep)
+pe_s6 = atmStrike - (6 * strikeStep)
+pe_s5 = atmStrike - (5 * strikeStep)
+pe_s4 = atmStrike - (4 * strikeStep)
+pe_s3 = atmStrike - (3 * strikeStep)
+pe_s2 = atmStrike - (2 * strikeStep)
+pe_s1 = atmStrike - (1 * strikeStep)
+pe_s0 = atmStrike
+pe_p1 = atmStrike + (1 * strikeStep)
+pe_p2 = atmStrike + (2 * strikeStep)
+pe_p3 = atmStrike + (3 * strikeStep)
+pe_p4 = atmStrike + (4 * strikeStep)
+pe_p5 = atmStrike + (5 * strikeStep)
+pe_p6 = atmStrike + (6 * strikeStep)
+
+ceRawNv = 0.0
+ceRawNv += nz(f_nv(f_sym(ce_s7, true), ce_s7, true, currentSpot))
+ceRawNv += nz(f_nv(f_sym(ce_s6, true), ce_s6, true, currentSpot))
+ceRawNv += nz(f_nv(f_sym(ce_s5, true), ce_s5, true, currentSpot))
+ceRawNv += nz(f_nv(f_sym(ce_s4, true), ce_s4, true, currentSpot))
+ceRawNv += nz(f_nv(f_sym(ce_s3, true), ce_s3, true, currentSpot))
+ceRawNv += nz(f_nv(f_sym(ce_s2, true), ce_s2, true, currentSpot))
+ceRawNv += nz(f_nv(f_sym(ce_s1, true), ce_s1, true, currentSpot))
+ceRawNv += nz(f_nv(f_sym(ce_s0, true), ce_s0, true, currentSpot))
+ceRawNv += nz(f_nv(f_sym(ce_p1, true), ce_p1, true, currentSpot))
+ceRawNv += nz(f_nv(f_sym(ce_p2, true), ce_p2, true, currentSpot))
+ceRawNv += nz(f_nv(f_sym(ce_p3, true), ce_p3, true, currentSpot))
+ceRawNv += nz(f_nv(f_sym(ce_p4, true), ce_p4, true, currentSpot))
+ceRawNv += nz(f_nv(f_sym(ce_p5, true), ce_p5, true, currentSpot))
+ceRawNv += nz(f_nv(f_sym(ce_p6, true), ce_p6, true, currentSpot))
+
+peRawNv = 0.0
+peRawNv += nz(f_nv(f_sym(pe_s7, false), pe_s7, false, currentSpot))
+peRawNv += nz(f_nv(f_sym(pe_s6, false), pe_s6, false, currentSpot))
+peRawNv += nz(f_nv(f_sym(pe_s5, false), pe_s5, false, currentSpot))
+peRawNv += nz(f_nv(f_sym(pe_s4, false), pe_s4, false, currentSpot))
+peRawNv += nz(f_nv(f_sym(pe_s3, false), pe_s3, false, currentSpot))
+peRawNv += nz(f_nv(f_sym(pe_s2, false), pe_s2, false, currentSpot))
+peRawNv += nz(f_nv(f_sym(pe_s1, false), pe_s1, false, currentSpot))
+peRawNv += nz(f_nv(f_sym(pe_s0, false), pe_s0, false, currentSpot))
+peRawNv += nz(f_nv(f_sym(pe_p1, false), pe_p1, false, currentSpot))
+peRawNv += nz(f_nv(f_sym(pe_p2, false), pe_p2, false, currentSpot))
+peRawNv += nz(f_nv(f_sym(pe_p3, false), pe_p3, false, currentSpot))
+peRawNv += nz(f_nv(f_sym(pe_p4, false), pe_p4, false, currentSpot))
+peRawNv += nz(f_nv(f_sym(pe_p5, false), pe_p5, false, currentSpot))
+peRawNv += nz(f_nv(f_sym(pe_p6, false), pe_p6, false, currentSpot))
+
+// ===== Day Opening Candle Baseline (FIXED) =====
+isNewDay = ta.change(time("D")) != 0
+
+var float ceBase          = na
+var float peBase          = na
+var float ceSecondBase    = na
+var float peSecondBase    = na
+var int   dayCandleNo     = 0
+var float cePrevDayClose  = na
+var float pePrevDayClose  = na
+
+var bool resetNow = false
+resetNow := false
+
+if isNewDay
+    ceBase       := na
+    peBase       := na
+    ceSecondBase := na
+    peSecondBase := na
+    dayCandleNo  := 0
+    resetNow     := true
+
+if barstate.isconfirmed
+    dayCandleNo += 1
+
+    if dayCandleNo == 1
+        ceBase := ceRawNv
+        peBase := peRawNv
+
+    if dayCandleNo == 2
+        ceSecondBase := ceRawNv
+        peSecondBase := peRawNv
+
+plotshape(showResetDebug and resetNow, title="Daily Baseline Reset", style=shape.labeldown, location=location.top, color=color.yellow, textcolor=color.black, text="RESET", size=size.tiny)
+
+// ===== Delta from Baselines =====
+ceDayDelta   = ceRawNv - nz(ceBase, ceRawNv)
+peDayDelta   = peRawNv - nz(peBase, peRawNv)
+
+ceFrom1stRaw = ceDayDelta
+peFrom1stRaw = peDayDelta
+ceDayRaw     = ceFrom1stRaw
+peDayRaw     = peFrom1stRaw
+
+ceFrom2ndRaw = not na(ceSecondBase) ? (ceRawNv - ceSecondBase) : na
+peFrom2ndRaw = not na(peSecondBase) ? (peRawNv - peSecondBase) : na
+
+ceFrom1stPct = math.abs(nz(ceBase)) > 0 ? (ceFrom1stRaw / math.abs(ceBase)) * 100 : 0.0
+peFrom1stPct = math.abs(nz(peBase)) > 0 ? (peFrom1stRaw / math.abs(peBase)) * 100 : 0.0
+ceFrom2ndPct = not na(ceSecondBase) and math.abs(ceSecondBase) > 0 ? (ceFrom2ndRaw / math.abs(ceSecondBase)) * 100 : na
+peFrom2ndPct = not na(peSecondBase) and math.abs(peSecondBase) > 0 ? (peFrom2ndRaw / math.abs(peSecondBase)) * 100 : na
+
+ceRawEma = ta.ema(ceFrom1stRaw, smoothLen)
+peRawEma = ta.ema(peFrom1stRaw, smoothLen)
+cePctEma = ta.ema(ceFrom1stPct, smoothLen)
+pePctEma = ta.ema(peFrom1stPct, smoothLen)
+
+useRaw     = displayMode == "Raw"
+ceActive   = useRaw ? ceRawEma : cePctEma
+peActive   = useRaw ? peRawEma : pePctEma
+
+// Capture previous day's closing chart value on the first bar of each new day
+if isNewDay
+    cePrevDayClose := ceActive[1]
+    pePrevDayClose := peActive[1]
+
+rawDiv     = rawChartUnit == "M" ? 1000000.0 : 1000.0
+ceRawChart = ceRawEma / rawDiv
+peRawChart = peRawEma / rawDiv
+
+crossUp   = ta.crossover(ceActive, peActive)
+crossDown = ta.crossunder(ceActive, peActive)
+
+ceCrossText  = crossUp ? "Bull Cross" : crossDown ? "Bear Cross" : "-"
+peCrossText  = crossDown ? "Bull Cross" : crossUp ? "Bear Cross" : "-"
+ceCrossColor = ceCrossText == "Bull Cross" ? color.lime : ceCrossText == "Bear Cross" ? color.red : color.gray
+peCrossColor = peCrossText == "Bull Cross" ? color.lime : peCrossText == "Bear Cross" ? color.red : color.gray
+
+// ===== Alerts =====
+f_json(txt) =>
+    _t = str.replace_all(txt, "\n", "\\n")
+    str.replace_all(_t, '"', '\\"')
+
+f_webhook_payload(_html_text) =>
+    '{"chat_id":"-1003533948678","parse_mode":"HTML","text":"' + f_json(_html_text) + '"}'
+
+if barstate.isconfirmed and crossUp
+    modeTxt  = useRaw ? "Raw" : "Percent"
+    deltaTxt = useDeltaWeighting ? " (Delta-Weighted)" : ""
+    msg_html = "<b>NET VOL CE/PE CROSS ALERT</b>\n" +
+      "<b>" + indexName + "</b> | TF:" + timeframe.period + "\n" +
+      "<b>Mode:</b> " + modeTxt + deltaTxt + "\n" +
+      "<b>Event:</b> Green crossed Red (BULL)\n" +
+      "<b>CE:</b> " + str.tostring(ceActive, "#.00") + " | <b>PE:</b> " + str.tostring(peActive, "#.00")
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and crossDown
+    modeTxt  = useRaw ? "Raw" : "Percent"
+    deltaTxt = useDeltaWeighting ? " (Delta-Weighted)" : ""
+    msg_html = "<b>NET VOL CE/PE CROSS ALERT</b>\n" +
+      "<b>" + indexName + "</b> | TF:" + timeframe.period + "\n" +
+      "<b>Mode:</b> " + modeTxt + deltaTxt + "\n" +
+      "<b>Event:</b> Red crossed Green (BEAR)\n" +
+      "<b>CE:</b> " + str.tostring(ceActive, "#.00") + " | <b>PE:</b> " + str.tostring(peActive, "#.00")
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+// ===== Plot =====
+plot(0, "Opening Candle Baseline", color=color.new(color.gray, 20), linewidth=1, style=plot.style_line)
+plot(useRaw ? ceRawChart : na, "CE Net Vol Raw", color=color.new(color.lime, 0), linewidth=2)
+plot(useRaw ? peRawChart : na, "PE Net Vol Raw", color=color.new(color.red, 0), linewidth=2)
+plot(not useRaw ? cePctEma : na, "CE Net Vol %",  color=color.new(color.lime, 0), linewidth=2)
+plot(not useRaw ? pePctEma : na, "PE Net Vol %",  color=color.new(color.red, 0), linewidth=2)
+
+// ===== Table =====
+f_pct_color(v) =>
+    na(v) ? color.new(color.gray, 0) : v > 0 ? color.new(color.lime, 0) : v < 0 ? color.new(color.red, 0) : color.new(color.gray, 0)
+
+f_fmt_km(v) =>
+    av = math.abs(v)
+    av >= 1000000 ? str.tostring(v / 1000000, "#.00") + "M" : av >= 1000 ? str.tostring(v / 1000, "#.00") + "K" : str.tostring(v, "#.0")
+
+var table t = table.new(position.top_right, 3, 10, border_width=1)
+
+if barstate.islast and showTable
+    table.cell(t, 0, 0, "Metric",  bgcolor=color.new(color.silver, 15), text_color=color.black)
+    table.cell(t, 1, 0, "CE",      bgcolor=color.new(color.silver, 15), text_color=color.black)
+    table.cell(t, 2, 0, "PE",      bgcolor=color.new(color.silver, 15), text_color=color.black)
+
+    table.cell(t, 0, 1, "Delta Weighting", bgcolor=color.new(color.navy, 60), text_color=color.white)
+    table.cell(t, 1, 1, useDeltaWeighting ? "ON" : "OFF", bgcolor=color.new(color.navy, 70), text_color=useDeltaWeighting ? color.lime : color.red)
+    table.cell(t, 2, 1, "", bgcolor=color.new(color.navy, 70), text_color=color.white)
+
+    table.cell(t, 0, 2, "1st Candle Raw", bgcolor=color.new(color.gray, 85), text_color=color.white)
+    table.cell(t, 1, 2, f_fmt_km(ceBase),  bgcolor=color.new(color.gray, 90), text_color=color.white)
+    table.cell(t, 2, 2, f_fmt_km(peBase),  bgcolor=color.new(color.gray, 90), text_color=color.white)
+
+    table.cell(t, 0, 3, "2nd Candle Raw", bgcolor=color.new(color.gray, 85), text_color=color.white)
+    table.cell(t, 1, 3, na(ceSecondBase) ? "Waiting" : f_fmt_km(ceSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(ceSecondBase) ? color.orange : color.white)
+    table.cell(t, 2, 3, na(peSecondBase) ? "Waiting" : f_fmt_km(peSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(peSecondBase) ? color.orange : color.white)
+
+    table.cell(t, 0, 4, "Current Raw", bgcolor=color.new(color.gray, 85), text_color=color.white)
+    table.cell(t, 1, 4, f_fmt_km(ceRawNv), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceDayRaw))
+    table.cell(t, 2, 4, f_fmt_km(peRawNv), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peDayRaw))
+
+    table.cell(t, 0, 5, "% from 1st Candle", bgcolor=color.new(color.gray, 85), text_color=color.white)
+    table.cell(t, 1, 5, str.tostring(ceFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom1stPct))
+    table.cell(t, 2, 5, str.tostring(peFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom1stPct))
+
+    table.cell(t, 0, 6, "% from 2nd Candle", bgcolor=color.new(color.gray, 85), text_color=color.white)
+    table.cell(t, 1, 6, na(ceFrom2ndPct) ? "-" : str.tostring(ceFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom2ndPct))
+    table.cell(t, 2, 6, na(peFrom2ndPct) ? "-" : str.tostring(peFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom2ndPct))
+
+// ===== Day vs Current Table =====
+unitLabel = rawChartUnit
+modeLabel = useRaw ? unitLabel : "%"
+
+f_fmt_chart(v) =>
+    useRaw ? (str.tostring(v / rawDiv, "#.00") + unitLabel) : (str.tostring(v, "#.00") + "%")
+
+ceDayChangePct = not na(cePrevDayClose) and math.abs(cePrevDayClose) > 0 ? ((ceActive - cePrevDayClose) / math.abs(cePrevDayClose)) * 100 : na
+peDayChangePct = not na(pePrevDayClose) and math.abs(pePrevDayClose) > 0 ? ((peActive - pePrevDayClose) / math.abs(pePrevDayClose)) * 100 : na
+
+var table t2 = table.new(position.bottom_right, 3, 5, border_width=1)
+
+if barstate.islast and showDayChangeTable
+    table.cell(t2, 0, 0, "Net Vol: Day vs Current (" + modeLabel + ")", bgcolor=color.new(color.navy, 10), text_color=color.white, text_size=size.small)
+    table.cell(t2, 1, 0, "CE",                                           bgcolor=color.new(color.navy, 10), text_color=color.lime,  text_size=size.small)
+    table.cell(t2, 2, 0, "PE",                                           bgcolor=color.new(color.navy, 10), text_color=color.red,   text_size=size.small)
+
+    table.cell(t2, 0, 1, "Prev Day Close", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(t2, 1, 1, na(cePrevDayClose) ? "No Data" : f_fmt_chart(cePrevDayClose), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(cePrevDayClose), text_size=size.small)
+    table.cell(t2, 2, 1, na(pePrevDayClose) ? "No Data" : f_fmt_chart(pePrevDayClose), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(pePrevDayClose), text_size=size.small)
+
+    table.cell(t2, 0, 2, "Today (Live)", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(t2, 1, 2, f_fmt_chart(ceActive), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(ceActive), text_size=size.small)
+    table.cell(t2, 2, 2, f_fmt_chart(peActive), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(peActive), text_size=size.small)
+
+    table.cell(t2, 0, 3, "% Change (Day)", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(t2, 1, 3, na(ceDayChangePct) ? "No Data" : str.tostring(ceDayChangePct, "#.00") + "%", bgcolor=color.new(color.gray, 85), text_color=f_pct_color(ceDayChangePct), text_size=size.small)
+    table.cell(t2, 2, 3, na(peDayChangePct) ? "No Data" : str.tostring(peDayChangePct, "#.00") + "%", bgcolor=color.new(color.gray, 85), text_color=f_pct_color(peDayChangePct), text_size=size.small)
+
+    netVol      = ceActive - peActive
+    netVolLabel = netVol > 0 ? "BULLISH" : netVol < 0 ? "BEARISH" : "NEUTRAL"
+    netVolColor = netVol > 0 ? color.lime  : netVol < 0 ? color.red  : color.gray
+    table.cell(t2, 0, 4, "Net Vol (CE-PE)", bgcolor=color.new(color.gray, 80), text_color=color.white,  text_size=size.small)
+    table.cell(t2, 1, 4, f_fmt_chart(netVol) + "  " + netVolLabel, bgcolor=color.new(color.gray, 85), text_color=netVolColor, text_size=size.small)
+    table.cell(t2, 2, 4, "", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
