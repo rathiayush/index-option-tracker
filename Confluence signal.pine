@@ -1,0 +1,311 @@
+@version=5
+indicator(EMARSIADXVortexMACD Signal Arrows, overlay=true, max_labels_count=500)
+
+ ═══════════════════════════════════════════════════════
+ INPUTS
+ ═══════════════════════════════════════════════════════
+ema_fast_len  = input.int(9,    EMA Fast Length,      group=EMA Settings)
+ema_slow_len  = input.int(21,   EMA Slow Length,      group=EMA Settings)
+rsi_len       = input.int(14,   RSI Length,           group=RSI Settings)
+rsi_sma_len   = input.int(14,   RSI SMA Length,       group=RSI Settings)
+adx_len       = input.int(14,   ADXDI Length,        group=ADX Settings)
+adx_threshold = input.float(23, ADX Threshold,        group=ADX Settings)
+vortex_len    = input.int(14,   Vortex Length,        group=Vortex Settings)
+macd_fast     = input.int(12,   MACD Fast EMA,        group=MACD Settings)
+macd_slow_i   = input.int(26,   MACD Slow EMA,        group=MACD Settings)
+macd_sig      = input.int(9,    MACD Signal EMA,      group=MACD Settings)
+sl_pts        = input.float(100,Stop Loss (Points),   group=Risk Management)
+tp_pts        = input.float(150,Take Profit (Points), group=Risk Management)
+show_table    = input.bool(true,  Show Dashboard Table,     group=Display)
+show_ema      = input.bool(true,  Show EMA Lines,           group=Display)
+show_cross    = input.bool(true,  Show EMA Crossover Icons, group=Display)
+tbl_pos       = input.string(Top Right, Table Position,
+     options=[Top Right,Top Left,Bottom Right,Bottom Left],
+     group=Display)
+
+ ═══════════════════════════════════════════════════════
+ 1. EMA
+ ═══════════════════════════════════════════════════════
+ema_fast = ta.ema(close, ema_fast_len)
+ema_slow = ta.ema(close, ema_slow_len)
+ema_bull = ema_fast  ema_slow
+ema_bear = ema_fast  ema_slow
+
+ema_cross_up   = ta.crossover(ema_fast,  ema_slow)
+ema_cross_down = ta.crossunder(ema_fast, ema_slow)
+
+plot(show_ema  ema_fast  na, EMA Fast, color=color.new(color.aqua,   0), linewidth=2)
+plot(show_ema  ema_slow  na, EMA Slow, color=color.new(color.orange, 0), linewidth=2)
+
+ EMA crossover diamonds
+plotshape(show_cross and ema_cross_up,   title=EMA Bull Cross,
+     style=shape.diamond, location=location.belowbar,
+     color=color.new(color.aqua, 0), size=size.tiny)
+
+plotshape(show_cross and ema_cross_down, title=EMA Bear Cross,
+     style=shape.diamond, location=location.abovebar,
+     color=color.new(color.orange, 0), size=size.tiny)
+
+ ═══════════════════════════════════════════════════════
+ 2. RSI — Wilder RMA, signal = SMA of RSI
+ ═══════════════════════════════════════════════════════
+rsi_val = ta.rsi(close, rsi_len)
+rsi_sma  = ta.sma(rsi_val, rsi_sma_len)
+rsi_bull = rsi_val  rsi_sma
+rsi_bear = rsi_val  rsi_sma
+
+ ═══════════════════════════════════════════════════════
+ 3. ADX + DI — Wilder smoothing (BeikabuOyaji v4 formula)
+ ═══════════════════════════════════════════════════════
+TrueRange = math.max(math.max(high - low,
+             math.abs(high - nz(close[1]))),
+             math.abs(low  - nz(close[1])))
+
+DirectionalMovementPlus  = high - nz(high[1])  nz(low[1]) - low
+                            math.max(high - nz(high[1]), 0)  0
+DirectionalMovementMinus = nz(low[1]) - low  high - nz(high[1])
+                            math.max(nz(low[1]) - low, 0)    0
+
+var float SmoothedTR  = 0.0
+var float SmoothedDMP = 0.0
+var float SmoothedDMM = 0.0
+
+SmoothedTR  = nz(SmoothedTR[1])  - nz(SmoothedTR[1])   adx_len + TrueRange
+SmoothedDMP = nz(SmoothedDMP[1]) - nz(SmoothedDMP[1])  adx_len + DirectionalMovementPlus
+SmoothedDMM = nz(SmoothedDMM[1]) - nz(SmoothedDMM[1])  adx_len + DirectionalMovementMinus
+
+diplus  = SmoothedDMP  SmoothedTR  100
+diminus = SmoothedDMM  SmoothedTR  100
+DX      = math.abs(diplus - diminus)  (diplus + diminus)  100
+adx_val = ta.sma(DX, adx_len)
+
+adx_strong = adx_val = adx_threshold
+di_bull    = diplus   diminus
+di_bear    = diminus  diplus
+adx_bull   = di_bull and adx_strong
+adx_bear   = di_bear and adx_strong
+
+ ═══════════════════════════════════════════════════════
+ 4. VORTEX — matches Pine v6 reference exactly
+ ═══════════════════════════════════════════════════════
+VMP      = math.abs(high - low[1])
+VMM      = math.abs(low  - high[1])
+STR      = math.sum(ta.atr(1), vortex_len)
+vi_plus  = math.sum(VMP, vortex_len)  STR
+vi_minus = math.sum(VMM, vortex_len)  STR
+
+vortex_bull = vi_plus   vi_minus
+vortex_bear = vi_minus  vi_plus
+
+ ═══════════════════════════════════════════════════════
+ 5. MACD — EMA-based, matches Pine v6 reference exactly
+ ═══════════════════════════════════════════════════════
+macd_fast_ema = ta.ema(close, macd_fast)
+macd_slow_ema = ta.ema(close, macd_slow_i)
+macd_line     = macd_fast_ema - macd_slow_ema
+macd_sig_line = ta.ema(macd_line, macd_sig)
+macd_hist     = macd_line - macd_sig_line
+
+macd_bull = macd_line  macd_sig_line
+macd_bear = macd_line  macd_sig_line
+
+ ═══════════════════════════════════════════════════════
+ COMPOSITE — ALL 5 must align
+ ═══════════════════════════════════════════════════════
+all_bull = ema_bull and rsi_bull and adx_bull and vortex_bull and macd_bull
+all_bear = ema_bear and rsi_bear and adx_bear and vortex_bear and macd_bear
+
+ ═══════════════════════════════════════════════════════
+ STATE-MACHINE LOCK — alternates BUY → SELL → BUY
+ ═══════════════════════════════════════════════════════
+var int last_signal = 0
+bull_signal = all_bull and last_signal != 1
+bear_signal = all_bear and last_signal != -1
+
+if bull_signal
+    last_signal = 1
+if bear_signal
+    last_signal = -1
+
+ ═══════════════════════════════════════════════════════
+ SL  TP VISUAL LINES
+ ═══════════════════════════════════════════════════════
+var float ep   = na
+var line  sl_l = na
+var line  tp_l = na
+var label sl_b = na
+var label tp_b = na
+
+if bull_signal
+    ep = close
+    line.delete(sl_l)
+    line.delete(tp_l)
+    label.delete(sl_b)
+    label.delete(tp_b)
+    sl_l = line.new(bar_index, ep - sl_pts, bar_index + 40, ep - sl_pts,
+         color=color.new(color.red,  10), width=2, style=line.style_dashed)
+    tp_l = line.new(bar_index, ep + tp_pts, bar_index + 40, ep + tp_pts,
+         color=color.new(color.lime, 10), width=2, style=line.style_dashed)
+    sl_b = label.new(bar_index + 41, ep - sl_pts,
+         SL  + str.tostring(ep - sl_pts, #.##) +  (- + str.tostring(sl_pts, #) + pts),
+         style=label.style_label_left, color=color.new(color.red,  20),
+         textcolor=color.white, size=size.tiny)
+    tp_b = label.new(bar_index + 41, ep + tp_pts,
+         TP  + str.tostring(ep + tp_pts, #.##) +  (+ + str.tostring(tp_pts, #) + pts),
+         style=label.style_label_left, color=color.new(color.lime, 20),
+         textcolor=color.black, size=size.tiny)
+
+if bear_signal
+    ep = close
+    line.delete(sl_l)
+    line.delete(tp_l)
+    label.delete(sl_b)
+    label.delete(tp_b)
+    sl_l = line.new(bar_index, ep + sl_pts, bar_index + 40, ep + sl_pts,
+         color=color.new(color.red,  10), width=2, style=line.style_dashed)
+    tp_l = line.new(bar_index, ep - tp_pts, bar_index + 40, ep - tp_pts,
+         color=color.new(color.lime, 10), width=2, style=line.style_dashed)
+    sl_b = label.new(bar_index + 41, ep + sl_pts,
+         SL  + str.tostring(ep + sl_pts, #.##) +  (+ + str.tostring(sl_pts, #) + pts),
+         style=label.style_label_left, color=color.new(color.red,  20),
+         textcolor=color.white, size=size.tiny)
+    tp_b = label.new(bar_index + 41, ep - tp_pts,
+         TP  + str.tostring(ep - tp_pts, #.##) +  (- + str.tostring(tp_pts, #) + pts),
+         style=label.style_label_left, color=color.new(color.lime, 20),
+         textcolor=color.black, size=size.tiny)
+
+ ═══════════════════════════════════════════════════════
+ BUY  SELL LABELS + ARROWS
+ ═══════════════════════════════════════════════════════
+if bull_signal
+    label.new(bar_index, low,
+         BUYn@  + str.tostring(close, #.##),
+         style=label.style_label_up, color=color.new(color.lime, 10),
+         textcolor=color.black, size=size.normal, yloc=yloc.belowbar)
+
+if bear_signal
+    label.new(bar_index, high,
+         SELLn@  + str.tostring(close, #.##),
+         style=label.style_label_down, color=color.new(color.red, 10),
+         textcolor=color.white, size=size.normal, yloc=yloc.abovebar)
+
+ Arrow icons belowabove the BUYSELL label
+plotshape(bull_signal, title=BUY Arrow,
+     style=shape.arrowup,
+     location=location.belowbar,
+     color=color.new(color.green, 0),
+     size=size.normal)
+
+plotshape(bear_signal, title=SELL Arrow,
+     style=shape.arrowdown,
+     location=location.abovebar,
+     color=color.new(color.red, 0),
+     size=size.normal)
+
+ ═══════════════════════════════════════════════════════
+ BACKGROUND TINT
+ ═══════════════════════════════════════════════════════
+bgcolor(all_bull  color.new(color.lime, 92)  na, title=Bull Zone)
+bgcolor(all_bear  color.new(color.red,  92)  na, title=Bear Zone)
+
+ ═══════════════════════════════════════════════════════
+ DASHBOARD TABLE
+ ═══════════════════════════════════════════════════════
+if show_table and barstate.islast
+    var tbl_position = tbl_pos == Top Right     position.top_right    
+                       tbl_pos == Top Left      position.top_left     
+                       tbl_pos == Bottom Right  position.bottom_right 
+                                                   position.bottom_left
+    var tbl = table.new(tbl_position, 4, 9,
+         border_width=1, border_color=color.new(color.gray, 50),
+         frame_width=2,  frame_color=color.new(color.white, 30))
+
+    c_bull = color.new(color.lime,   15)
+    c_bear = color.new(color.red,    15)
+    c_neut = color.new(color.gray,   30)
+    c_hdr  = color.new(#1a1a2e,       0)
+    c_row  = color.new(#16213e,        0)
+    c_risk = color.new(#0d2137,        0)
+    tw     = color.white
+    tb     = color.black
+
+     Header
+    table.cell(tbl, 0, 0, INDICATOR, text_color=tw, bgcolor=c_hdr, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 0, VALUE 1,   text_color=tw, bgcolor=c_hdr, text_size=size.small)
+    table.cell(tbl, 2, 0, VALUE 2,   text_color=tw, bgcolor=c_hdr, text_size=size.small)
+    table.cell(tbl, 3, 0, SIGNAL,    text_color=tw, bgcolor=c_hdr, text_size=size.small)
+
+     EMA
+    table.cell(tbl, 0, 1, EMA  + str.tostring(ema_fast_len) +    + str.tostring(ema_slow_len),
+         text_color=tw, bgcolor=c_row, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 1, str.tostring(ema_fast, #.##), text_color=tw, bgcolor=c_row, text_size=size.small)
+    table.cell(tbl, 2, 1, str.tostring(ema_slow, #.##), text_color=tw, bgcolor=c_row, text_size=size.small)
+    table.cell(tbl, 3, 1, ema_bull  BULL  BEAR,
+         text_color=ema_bull  tb  tw, bgcolor=ema_bull  c_bull  c_bear, text_size=size.small)
+
+     RSI
+    table.cell(tbl, 0, 2, RSI( + str.tostring(rsi_len) + )  SMA( + str.tostring(rsi_sma_len) + ),
+         text_color=tw, bgcolor=c_row, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 2, str.tostring(rsi_val, #.##), text_color=tw, bgcolor=c_row, text_size=size.small)
+    table.cell(tbl, 2, 2, str.tostring(rsi_sma,  #.##), text_color=tw, bgcolor=c_row, text_size=size.small)
+    table.cell(tbl, 3, 2, rsi_bull  BULL  BEAR,
+         text_color=rsi_bull  tb  tw, bgcolor=rsi_bull  c_bull  c_bear, text_size=size.small)
+
+     DI
+    table.cell(tbl, 0, 3, +DI  -DI, text_color=tw, bgcolor=c_row, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 3, str.tostring(diplus,  #.##), text_color=tw, bgcolor=c_row, text_size=size.small)
+    table.cell(tbl, 2, 3, str.tostring(diminus, #.##), text_color=tw, bgcolor=c_row, text_size=size.small)
+    table.cell(tbl, 3, 3, di_bull  BULL  BEAR,
+         text_color=di_bull  tb  tw, bgcolor=di_bull  c_bull  c_bear, text_size=size.small)
+
+     ADX
+    table.cell(tbl, 0, 4, ADX (=  + str.tostring(adx_threshold, #) + ),
+         text_color=tw, bgcolor=c_row, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 4, str.tostring(adx_val, #.##), text_color=tw, bgcolor=c_row, text_size=size.small)
+    table.cell(tbl, 2, 4, , text_color=tw, bgcolor=c_row, text_size=size.small)
+    table.cell(tbl, 3, 4, adx_strong  STRONG  WEAK,
+         text_color=tb, bgcolor=adx_strong  color.new(color.lime, 20)  color.new(color.orange, 20),
+         text_size=size.small)
+
+     Vortex
+    table.cell(tbl, 0, 5, +VI  -VI, text_color=tw, bgcolor=c_row, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 5, str.tostring(vi_plus,  #.####), text_color=tw, bgcolor=c_row, text_size=size.small)
+    table.cell(tbl, 2, 5, str.tostring(vi_minus, #.####), text_color=tw, bgcolor=c_row, text_size=size.small)
+    table.cell(tbl, 3, 5, vortex_bull  BULL  BEAR,
+         text_color=vortex_bull  tb  tw, bgcolor=vortex_bull  c_bull  c_bear, text_size=size.small)
+
+     MACD
+    table.cell(tbl, 0, 6,
+         MACD( + str.tostring(macd_fast) + , + str.tostring(macd_slow_i) + ) Sig( + str.tostring(macd_sig) + ),
+         text_color=tw, bgcolor=c_row, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 6, str.tostring(macd_line,     #.####), text_color=tw, bgcolor=c_row, text_size=size.small)
+    table.cell(tbl, 2, 6, str.tostring(macd_sig_line, #.####), text_color=tw, bgcolor=c_row, text_size=size.small)
+    table.cell(tbl, 3, 6, macd_bull  BULL  BEAR,
+         text_color=macd_bull  tb  tw, bgcolor=macd_bull  c_bull  c_bear, text_size=size.small)
+
+     Risk
+    rr = tp_pts  sl_pts
+    table.cell(tbl, 0, 7, SL  TP, text_color=tw, bgcolor=c_risk, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 7, SL  + str.tostring(sl_pts, #),
+         text_color=color.new(color.red,  0), bgcolor=c_risk, text_size=size.small)
+    table.cell(tbl, 2, 7, TP  + str.tostring(tp_pts, #),
+         text_color=color.new(color.lime, 0), bgcolor=c_risk, text_size=size.small)
+    table.cell(tbl, 3, 7, RR 1 + str.tostring(rr, #.#),
+         text_color=color.new(color.yellow, 0), bgcolor=c_risk, text_size=size.small)
+
+     Overall
+    o_col = all_bull  c_bull  all_bear  c_bear  c_neut
+    o_txt = all_bull  BUY   all_bear  SELL  MIXED
+    o_tc  = all_bull  tb      tw
+    table.cell(tbl, 0, 8, OVERALL (55), text_color=tw, bgcolor=c_hdr, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 8, , text_color=tw, bgcolor=c_hdr, text_size=size.small)
+    table.cell(tbl, 2, 8, , text_color=tw, bgcolor=c_hdr, text_size=size.small)
+    table.cell(tbl, 3, 8, o_txt, text_color=o_tc, bgcolor=o_col, text_size=size.normal)
+
+ ═══════════════════════════════════════════════════════
+ ALERTS
+ ═══════════════════════════════════════════════════════
+alertcondition(bull_signal,    ALL-BULL Signal,   All 5 indicators BULLISH — BUY fired)
+alertcondition(bear_signal,    ALL-BEAR Signal,   All 5 indicators BEARISH — SELL fired)
+alertcondition(ema_cross_up,   EMA Bullish Cross, EMA Fast crossed ABOVE EMA Slow)
+alertcondition(ema_cross_down, EMA Bearish Cross, EMA Fast crossed BELOW EMA Slow)

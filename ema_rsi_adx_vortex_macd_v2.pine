@@ -1,0 +1,520 @@
+//@version=5
+indicator("EMA/RSI/ADX/Vortex/MACD Signal Arrows v2", overlay=true, max_labels_count=500)
+
+// ═══════════════════════════════════════════════════════════════════
+// SIGNAL FLOW
+//  Step 1 ─ MACD crossover (bull or bear) fires the check
+//  Step 2 ─ RSI crossed its SMA within last N bars? → high-prob, else skip
+//  Step 3 ─ DI+ vs DI– gap ≥ threshold  +  DI cross within N bars
+//  Step 4 ─ Vortex: VI cross happened + VI+/VI– diverging continuously
+// ═══════════════════════════════════════════════════════════════════
+
+// ───────────────────────────────────────────────────────────────────
+// INPUTS
+// ───────────────────────────────────────────────────────────────────
+ema_fast_len        = input.int(9,    "EMA Fast Length",                    group="EMA (context)")
+ema_slow_len        = input.int(21,   "EMA Slow Length",                    group="EMA (context)")
+
+macd_fast           = input.int(12,   "MACD Fast EMA",                      group="Step 1 · MACD Trigger")
+macd_slow_i         = input.int(26,   "MACD Slow EMA",                      group="Step 1 · MACD Trigger")
+macd_sig_len        = input.int(9,    "MACD Signal EMA",                    group="Step 1 · MACD Trigger")
+
+rsi_len             = input.int(14,   "RSI Length",                         group="Step 2 · RSI Check")
+rsi_sma_len         = input.int(14,   "RSI SMA (Signal) Length",            group="Step 2 · RSI Check")
+
+adx_len             = input.int(14,   "ADX/DI Length",                      group="Step 3 · DI Check")
+di_diff_min         = input.float(12, "Min |DI+ – DI–| Gap",                group="Step 3 · DI Check",   minval=1)
+di_cross_bars       = input.int(5,    "DI Cross Lookback (bars)",           group="Step 3 · DI Check",   minval=1, maxval=20)
+pre_alert_pts       = input.float(15, "Pre-Alert: DI Move Threshold (pts)", group="Step 3 · DI Check",   minval=1)
+pre_alert_bars      = input.int(10,   "Pre-Alert: DI Move Lookback (bars)", group="Step 3 · DI Check",   minval=1, maxval=50)
+
+vortex_len          = input.int(14,    "Vortex Length",                        group="Step 4 · Vortex")
+vortex_confirm_bars = input.int(6,     "VI Cross Lookback (bars)",             group="Step 4 · Vortex", minval=1, maxval=20)
+vortex_diff_min     = input.float(0.12, "Min VI+/VI– Difference (OR gate)",    group="Step 4 · Vortex", minval=0.001, step=0.01)
+vortex_mandatory    = input.bool(true,  "Vortex Required for Signal",          group="Step 4 · Vortex")
+
+sl_pts              = input.float(25,  "Stop Loss (Points)",                group="Risk Management")
+tp_pts              = input.float(150, "Take Profit (Points)",              group="Risk Management")
+exit_mins           = input.int(15,   "Max Hold Time (minutes)",            group="Risk Management", minval=1)
+
+tg_chat_id          = input.string("-1003533948678", "Telegram Chat ID",    group="Telegram Alerts")
+tg_symbol           = input.string("",  "Symbol label in alerts (optional)", group="Telegram Alerts")
+
+show_table          = input.bool(true,  "Show Dashboard",                   group="Display")
+show_ema            = input.bool(true,  "Show EMA Lines",                   group="Display")
+show_ema_cross      = input.bool(true,  "Show EMA Cross Diamonds",          group="Display")
+tbl_pos             = input.string("Top Right", "Table Position",
+     options=["Top Right","Top Left","Bottom Right","Bottom Left"],         group="Display")
+
+// ───────────────────────────────────────────────────────────────────
+// TELEGRAM HELPERS
+// ───────────────────────────────────────────────────────────────────
+f_json(txt) =>
+    str.replace_all(str.replace_all(txt, "\n", "\\n"), '"', '\\"')
+
+f_tg(html) =>
+    '{"chat_id":"' + tg_chat_id + '","parse_mode":"HTML","text":"' + f_json(html) + '"}'
+
+f_sym_lbl() =>
+    tg_symbol != "" ? tg_symbol : syminfo.ticker
+
+// ───────────────────────────────────────────────────────────────────
+// EMA  — chart context only, not in signal
+// ───────────────────────────────────────────────────────────────────
+ema_fast      = ta.ema(close, ema_fast_len)
+ema_slow      = ta.ema(close, ema_slow_len)
+ema_cross_up  = ta.crossover(ema_fast, ema_slow)
+ema_cross_dn  = ta.crossunder(ema_fast, ema_slow)
+
+plot(show_ema ? ema_fast : na, "EMA Fast", color=color.new(color.aqua,   0), linewidth=2)
+plot(show_ema ? ema_slow : na, "EMA Slow", color=color.new(color.orange, 0), linewidth=2)
+plotshape(show_ema_cross and ema_cross_up, title="EMA Bull Cross",
+     style=shape.diamond, location=location.belowbar, color=color.new(color.aqua,   0), size=size.tiny)
+plotshape(show_ema_cross and ema_cross_dn, title="EMA Bear Cross",
+     style=shape.diamond, location=location.abovebar, color=color.new(color.orange, 0), size=size.tiny)
+
+// ───────────────────────────────────────────────────────────────────
+// STEP 1 · MACD — firing trigger
+// ───────────────────────────────────────────────────────────────────
+macd_fast_ema = ta.ema(close, macd_fast)
+macd_slow_ema = ta.ema(close, macd_slow_i)
+macd_line     = macd_fast_ema - macd_slow_ema
+macd_sig_line = ta.ema(macd_line, macd_sig_len)
+macd_hist     = macd_line - macd_sig_line
+macd_bull     = macd_line > macd_sig_line
+macd_bear     = macd_line < macd_sig_line
+
+// Crossover + histogram must confirm the same direction
+macd_x_bull = ta.crossover(macd_line,  macd_sig_line) and macd_hist > 0
+macd_x_bear = ta.crossunder(macd_line, macd_sig_line) and macd_hist < 0
+
+// ───────────────────────────────────────────────────────────────────
+// STEP 2 · RSI — crossed its SMA within last N bars
+// ───────────────────────────────────────────────────────────────────
+rsi_val = ta.rsi(close, rsi_len)
+rsi_sma = ta.sma(rsi_val, rsi_sma_len)
+rsi_bull = rsi_val > rsi_sma
+rsi_bear = rsi_val < rsi_sma
+
+
+// ───────────────────────────────────────────────────────────────────
+// STEP 3 · ADX + DI — gap check + recent DI cross
+// ───────────────────────────────────────────────────────────────────
+_tr  = math.max(math.max(high - low,
+       math.abs(high - nz(close[1]))),
+       math.abs(low  - nz(close[1])))
+
+_dmp = high - nz(high[1]) > nz(low[1]) - low ? math.max(high - nz(high[1]), 0) : 0
+_dmm = nz(low[1]) - low > high - nz(high[1])  ? math.max(nz(low[1]) - low,  0) : 0
+
+var float _str  = 0.0
+var float _sdmp = 0.0
+var float _sdmm = 0.0
+_str  := nz(_str[1])  - nz(_str[1])  / adx_len + _tr
+_sdmp := nz(_sdmp[1]) - nz(_sdmp[1]) / adx_len + _dmp
+_sdmm := nz(_sdmm[1]) - nz(_sdmm[1]) / adx_len + _dmm
+
+diplus  = _sdmp / _str * 100
+diminus = _sdmm / _str * 100
+dx      = math.abs(diplus - diminus) / (diplus + diminus) * 100
+adx_val = ta.sma(dx, adx_len)
+
+max_bars_back(diplus,  51)   // 50 = max pre_alert_bars lookback
+max_bars_back(diminus, 51)
+
+di_diff        = diplus - diminus
+di_gap_bull_ok = di_diff  >= di_diff_min
+di_gap_bear_ok = -di_diff >= di_diff_min
+
+di_x_bull_recent = false
+di_x_bear_recent = false
+for i = 0 to di_cross_bars - 1
+    if diplus[i]  > diminus[i] and diplus[i + 1] <= diminus[i + 1]
+        di_x_bull_recent := true
+    if diminus[i] > diplus[i]  and diminus[i + 1] <= diplus[i + 1]
+        di_x_bear_recent := true
+
+di_bull_ok = di_gap_bull_ok and di_x_bull_recent
+di_bear_ok = di_gap_bear_ok and di_x_bear_recent
+
+// ── PRE-ALERT: DI converging toward a crossover
+//    Bull setup: DI+ rose ≥ N pts AND DI– fell ≥ N pts over lookback window
+//    Bear setup: DI– rose ≥ N pts AND DI+ fell ≥ N pts over lookback window
+//    Only fires when no crossover has happened yet (DI still on same side)
+diplus_chg  = diplus  - diplus[pre_alert_bars]   // +ve = rising
+diminus_chg = diminus - diminus[pre_alert_bars]   // +ve = rising
+
+// Bull pre-alert: DI– still dominant, but DI+ rising and DI– falling by ≥ threshold
+pre_alert_bull = diminus > diplus and diplus_chg >= pre_alert_pts and diminus_chg <= -pre_alert_pts
+
+// Bear pre-alert: DI+ still dominant, but DI– rising and DI+ falling by ≥ threshold
+pre_alert_bear = diplus > diminus and diminus_chg >= pre_alert_pts and diplus_chg <= -pre_alert_pts
+
+// ───────────────────────────────────────────────────────────────────
+// STEP 4 · VORTEX — cross happened + VI+/VI– diverging every bar since
+// ───────────────────────────────────────────────────────────────────
+_vmp    = math.abs(high - low[1])
+_vmm    = math.abs(low  - high[1])
+_vstr   = math.sum(ta.atr(1), vortex_len)
+vi_plus  = math.sum(_vmp, vortex_len) / _vstr
+vi_minus = math.sum(_vmm, vortex_len) / _vstr
+
+max_bars_back(vi_plus,  20)
+max_bars_back(vi_minus, 20)
+
+// Age = bars since most recent VI cross (999 = no cross yet)
+var int vi_bull_age = 999
+var int vi_bear_age = 999
+vi_bull_age := vi_plus > vi_minus and vi_plus[1] <= vi_minus[1] ? 0 : math.min(vi_bull_age + 1, 999)
+vi_bear_age := vi_minus > vi_plus and vi_minus[1] <= vi_plus[1] ? 0 : math.min(vi_bear_age + 1, 999)
+
+// Vortex confirm — EITHER condition passes:
+//   A) VI+ crossed above VI– within last N bars  (recent momentum shift)
+//   B) VI+ – VI– gap ≥ threshold                 (strong persistent divergence)
+vi_diff = vi_plus - vi_minus   // positive = bull dominant
+
+vortex_bull_ok = vi_plus > vi_minus and (vi_bull_age <= vortex_confirm_bars or vi_diff >= vortex_diff_min)
+vortex_bear_ok = vi_minus > vi_plus and (vi_bear_age <= vortex_confirm_bars or (-vi_diff) >= vortex_diff_min)
+
+// ───────────────────────────────────────────────────────────────────
+// SIGNAL ASSEMBLY
+// ───────────────────────────────────────────────────────────────────
+vx_gate_bull = vortex_mandatory ? vortex_bull_ok : true
+vx_gate_bear = vortex_mandatory ? vortex_bear_ok : true
+
+// MACD + RSI checked as direction STATE (every bar)
+// DI cross recency is the effective "when to fire" gate
+all_bull = macd_bull and rsi_bull and di_bull_ok and vx_gate_bull
+all_bear = macd_bear and rsi_bear and di_bear_ok and vx_gate_bear
+
+// ── Trade state tracking ─────────────────────────────────────────
+var float trade_entry = na        // entry price
+var int   trade_bar   = na        // bar_index at entry
+var int   trade_dir   = 0         // 1 = long, -1 = short, 0 = flat
+var bool  in_trade    = false
+
+// Bars that equal the max-hold-time — derived from timeframe.multiplier
+tf_secs_intra = timeframe.multiplier * 60
+tf_secs_daily = timeframe.multiplier * 86400
+tf_secs       = timeframe.isintraday ? tf_secs_intra : timeframe.isdaily ? tf_secs_daily : 604800
+exit_bars     = math.max(1, math.round(exit_mins * 60 / tf_secs))
+
+// ── Exit checks (runs every bar while in a trade) ────────────────
+var string exit_reason = ""
+exit_now = false
+
+if in_trade
+    bars_held      = bar_index - trade_bar
+    time_exit      = bars_held >= exit_bars
+    sl_long_exit   = trade_dir ==  1 and low  <= trade_entry - sl_pts
+    tp_long_exit   = trade_dir ==  1 and high >= trade_entry + tp_pts
+    sl_short_exit  = trade_dir == -1 and high >= trade_entry + sl_pts
+    tp_short_exit  = trade_dir == -1 and low  <= trade_entry - tp_pts
+
+    if tp_long_exit or tp_short_exit
+        exit_reason := "TP ✅"
+        exit_now    := true
+    else if sl_long_exit or sl_short_exit
+        exit_reason := "SL ❌"
+        exit_now    := true
+    else if time_exit
+        exit_reason := "TIME ⏱ " + str.tostring(exit_mins) + "m"
+        exit_now    := true
+
+// ── Fire exit label and free slot for new signal ─────────────────
+if exit_now
+    is_tp   = str.contains(exit_reason, "TP")
+    is_sl   = str.contains(exit_reason, "SL")
+    exit_px = trade_dir == 1 ? (is_tp ? trade_entry + tp_pts : is_sl ? trade_entry - sl_pts : close) : (is_tp ? trade_entry - tp_pts : is_sl ? trade_entry + sl_pts : close)
+    lbl_style = trade_dir == 1 ? label.style_label_down : label.style_label_up
+    lbl_y     = trade_dir == 1 ? high : low
+    lbl_loc   = trade_dir == 1 ? yloc.abovebar : yloc.belowbar
+    label.new(bar_index, lbl_y,
+         "EXIT " + exit_reason + "\n@ " + str.tostring(exit_px, "#.##"),
+         style=lbl_style, color=color.new(color.gray, 20),
+         textcolor=color.white, size=size.small, yloc=lbl_loc)
+    in_trade   := false
+    trade_dir  := 0
+    trade_entry := na
+
+// ── New signal fires only when flat (no open trade) ──────────────
+bull_signal = all_bull and not in_trade
+bear_signal = all_bear and not in_trade
+
+if bull_signal
+    in_trade    := true
+    trade_entry := close
+    trade_bar   := bar_index
+    trade_dir   := 1
+if bear_signal
+    in_trade    := true
+    trade_entry := close
+    trade_bar   := bar_index
+    trade_dir   := -1
+
+// ───────────────────────────────────────────────────────────────────
+// SL / TP LINES
+// ───────────────────────────────────────────────────────────────────
+var float ep  = na
+var line sl_l = na
+var line tp_l = na
+var label sl_b = na
+var label tp_b = na
+
+if bull_signal
+    ep := close
+    line.delete(sl_l), line.delete(tp_l), label.delete(sl_b), label.delete(tp_b)
+    sl_l := line.new(bar_index, ep - sl_pts, bar_index + exit_bars, ep - sl_pts,
+         color=color.new(color.red,  10), width=2, style=line.style_dashed)
+    tp_l := line.new(bar_index, ep + tp_pts, bar_index + exit_bars, ep + tp_pts,
+         color=color.new(color.lime, 10), width=2, style=line.style_dashed)
+    sl_b := label.new(bar_index + exit_bars + 1, ep - sl_pts,
+         "SL −" + str.tostring(sl_pts, "#") + "pts | " + str.tostring(exit_mins) + "m max",
+         style=label.style_label_left, color=color.new(color.red,  20), textcolor=color.white, size=size.tiny)
+    tp_b := label.new(bar_index + exit_bars + 1, ep + tp_pts,
+         "TP +" + str.tostring(tp_pts, "#") + "pts",
+         style=label.style_label_left, color=color.new(color.lime, 20), textcolor=color.black, size=size.tiny)
+
+if bear_signal
+    ep := close
+    line.delete(sl_l), line.delete(tp_l), label.delete(sl_b), label.delete(tp_b)
+    sl_l := line.new(bar_index, ep + sl_pts, bar_index + exit_bars, ep + sl_pts,
+         color=color.new(color.red,  10), width=2, style=line.style_dashed)
+    tp_l := line.new(bar_index, ep - tp_pts, bar_index + exit_bars, ep - tp_pts,
+         color=color.new(color.lime, 10), width=2, style=line.style_dashed)
+    sl_b := label.new(bar_index + exit_bars + 1, ep + sl_pts,
+         "SL +" + str.tostring(sl_pts, "#") + "pts | " + str.tostring(exit_mins) + "m max",
+         style=label.style_label_left, color=color.new(color.red,  20), textcolor=color.white, size=size.tiny)
+    tp_b := label.new(bar_index + exit_bars + 1, ep - tp_pts,
+         "TP −" + str.tostring(tp_pts, "#") + "pts",
+         style=label.style_label_left, color=color.new(color.lime, 20), textcolor=color.black, size=size.tiny)
+
+// ───────────────────────────────────────────────────────────────────
+// LABELS + ARROWS
+// ───────────────────────────────────────────────────────────────────
+if bull_signal
+    label.new(bar_index, low,  "BUY\n@ "  + str.tostring(close, "#.##"),
+         style=label.style_label_up,   color=color.new(color.lime, 10),
+         textcolor=color.black, size=size.normal, yloc=yloc.belowbar)
+
+if bear_signal
+    label.new(bar_index, high, "SELL\n@ " + str.tostring(close, "#.##"),
+         style=label.style_label_down, color=color.new(color.red, 10),
+         textcolor=color.white, size=size.normal, yloc=yloc.abovebar)
+
+plotshape(bull_signal, title="BUY Arrow",  style=shape.arrowup,
+     location=location.belowbar, color=color.new(color.green, 0), size=size.normal)
+plotshape(bear_signal, title="SELL Arrow", style=shape.arrowdown,
+     location=location.abovebar, color=color.new(color.red,   0), size=size.normal)
+
+// Pre-alert triangles — smaller, below/above bar, yellow/orange
+plotshape(pre_alert_bull, title="Pre-Alert Bull",
+     style=shape.triangleup, location=location.belowbar,
+     color=color.new(color.yellow, 0), size=size.small,
+     text="⚡", textcolor=color.yellow)
+plotshape(pre_alert_bear, title="Pre-Alert Bear",
+     style=shape.triangledown, location=location.abovebar,
+     color=color.new(color.orange, 0), size=size.small,
+     text="⚡", textcolor=color.orange)
+
+bgcolor(all_bull ? color.new(color.lime, 92) : na, title="Bull Zone")
+bgcolor(all_bear ? color.new(color.red,  92) : na, title="Bear Zone")
+
+// ───────────────────────────────────────────────────────────────────
+// DASHBOARD  (4 cols × 12 rows)
+// ───────────────────────────────────────────────────────────────────
+if show_table and barstate.islast
+    var _pos = tbl_pos == "Top Right"    ? position.top_right    :
+               tbl_pos == "Top Left"     ? position.top_left     :
+               tbl_pos == "Bottom Right" ? position.bottom_right :
+                                           position.bottom_left
+
+    var tbl = table.new(_pos, 4, 13,
+         border_width=1, border_color=color.new(color.gray, 50),
+         frame_width=2,  frame_color=color.new(color.white, 30))
+
+    C_BULL = color.new(color.lime,   15)
+    C_BEAR = color.new(color.red,    15)
+    C_OK   = color.new(color.lime,   20)
+    C_FAIL = color.new(color.orange, 20)
+    C_NEUT = color.new(color.gray,   40)
+    C_HDR  = color.new(#1a1a2e, 0)
+    C_ROW  = color.new(#16213e, 0)
+    C_RISK = color.new(#0d2137, 0)
+    TW = color.white
+    TB = color.black
+
+    // ── row 0 : header
+    table.cell(tbl, 0, 0, "STEP / INDICATOR",   text_color=TW, bgcolor=C_HDR, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 0, "VALUE 1",             text_color=TW, bgcolor=C_HDR, text_size=size.small)
+    table.cell(tbl, 2, 0, "VALUE 2",             text_color=TW, bgcolor=C_HDR, text_size=size.small)
+    table.cell(tbl, 3, 0, "STATUS",              text_color=TW, bgcolor=C_HDR, text_size=size.small)
+
+    // ── row 1 : STEP 1 – MACD state (bull/bear, checked every bar)
+    table.cell(tbl, 0, 1, "① MACD Direction [STATE]", text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 1, str.tostring(macd_line,     "#.####"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 1, str.tostring(macd_sig_line, "#.####"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 1, macd_bull ? "BULL ✓" : "BEAR ✓",
+         text_color=TB, bgcolor=macd_bull ? C_BULL : C_BEAR, text_size=size.small)
+
+    // ── row 2 : MACD histogram + last crossover context
+    macd_x_recently = macd_x_bull or macd_x_bear
+    macd_x_lbl = macd_x_bull ? "X↑ this bar" : macd_x_bear ? "X↓ this bar" : "hist: " + str.tostring(macd_hist, "#.####")
+    table.cell(tbl, 0, 2, "   MACD Histogram / Cross", text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 2, str.tostring(macd_hist, "#.####"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 2, macd_x_recently ? "CROSSED ✓" : "—", text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 2, macd_bull ? "BULL" : "BEAR",
+         text_color=macd_bull ? TB : TW, bgcolor=macd_bull ? C_BULL : C_BEAR, text_size=size.small)
+
+    // ── row 3 : STEP 2 – RSI state (bull/bear)
+    table.cell(tbl, 0, 3, "② RSI Direction [STATE]", text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 3, str.tostring(rsi_val, "#.##"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 3, "SMA " + str.tostring(rsi_sma, "#.##"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 3, rsi_bull ? "BULL ✓" : "BEAR ✓", text_color=rsi_bull ? TB : TW, bgcolor=rsi_bull ? C_BULL : C_BEAR, text_size=size.small)
+
+    // ── row 4 : STEP 3a – DI gap
+    s3a_bull = di_gap_bull_ok
+    s3a_bear = di_gap_bear_ok
+    s3a_ok   = s3a_bull or s3a_bear
+    table.cell(tbl, 0, 4, "③ |DI+−DI–| ≥ " + str.tostring(di_diff_min, "#") + " [CHECK]",
+         text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 4, "DI+ " + str.tostring(diplus,  "#.##"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 4, "DI− " + str.tostring(diminus, "#.##"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 4, "Δ" + str.tostring(math.abs(di_diff), "#.#"),
+         text_color=TB, bgcolor=s3a_ok ? C_OK : C_FAIL, text_size=size.small)
+
+    // ── row 5 : STEP 3b – DI cross recency
+    s3b_bull = di_x_bull_recent
+    s3b_bear = di_x_bear_recent
+    s3b_ok   = s3b_bull or s3b_bear
+    table.cell(tbl, 0, 5, "   DI Cross ≤ " + str.tostring(di_cross_bars) + " bars",
+         text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 5, s3b_bull ? "BULL ✓" : "—",  text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 5, s3b_bear ? "BEAR ✓" : "—",  text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 5, s3b_ok ? "RECENT ✓" : "STALE",
+         text_color=TB, bgcolor=s3b_ok ? C_OK : C_FAIL, text_size=size.small)
+
+    // ── row 5b : PRE-ALERT — DI converging (no crossover yet)
+    pa_ok  = pre_alert_bull or pre_alert_bear
+    pa_txt = pre_alert_bull ? "⚡ BULL SETUP" : pre_alert_bear ? "⚡ BEAR SETUP" : "—"
+    pa_col    = pre_alert_bull ? color.new(color.yellow, 20) : pre_alert_bear ? color.new(color.orange, 20) : C_NEUT
+    pa_dp_str = str.tostring(diplus_chg,  "#.#")
+    pa_dm_str = str.tostring(diminus_chg, "#.#")
+    pa_di_chg = pre_alert_bull ? "+Δ" + pa_dp_str + "  −Δ" + pa_dm_str : pre_alert_bear ? "−Δ" + pa_dm_str + "  +Δ" + pa_dp_str : "—"
+    table.cell(tbl, 0, 6, "   ⚡ Pre-Alert DI ±" + str.tostring(pre_alert_pts, "#") + "pts / " + str.tostring(pre_alert_bars) + "bars",
+         text_color=color.new(color.yellow, 0), bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 6, pa_di_chg,  text_color=TW, bgcolor=C_ROW, text_size=size.tiny)
+    table.cell(tbl, 2, 6, "",          text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 6, pa_txt, text_color=TB, bgcolor=pa_col, text_size=size.small)
+
+    // ── row 7 : ADX context (not in signal gate)
+    adx_rising_now = adx_val > adx_val[1]
+    table.cell(tbl, 0, 7, "   ADX (context)", text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 7, str.tostring(adx_val, "#.##"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 7, adx_rising_now ? "↑ rising" : "↓ flat/fall", text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 7, adx_rising_now ? "RISING" : "FLAT", text_color=TB, bgcolor=adx_rising_now ? color.new(color.lime, 30) : C_NEUT, text_size=size.small)
+
+    // ── row 8 : STEP 4 – Vortex
+    s4_bull = vortex_bull_ok
+    s4_bear = vortex_bear_ok
+    s4_ok   = s4_bull or s4_bear
+    s4_lbl  = vortex_mandatory ? "④ Vortex [REQUIRED]" : "④ Vortex [support]"
+    // Show which OR-gate triggered: X = recent cross, Δ = gap threshold
+    s4_via_x    = s4_bull ? vi_bull_age <= vortex_confirm_bars : vi_bear_age <= vortex_confirm_bars
+    s4_via_diff = s4_bull ? vi_diff >= vortex_diff_min : (-vi_diff) >= vortex_diff_min
+    s4_how  = s4_ok ? (s4_via_x and s4_via_diff ? "X+Δ ✓" : s4_via_x ? "X ✓" : "Δ ✓") : "NONE"
+    s4_txt  = s4_bull ? "BULL " + s4_how : s4_bear ? "BEAR " + s4_how : "WAITING"
+    s4_col  = s4_ok ? C_OK : (vortex_mandatory ? C_FAIL : C_NEUT)
+    table.cell(tbl, 0, 8, s4_lbl, text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 8, "VI+ " + str.tostring(vi_plus,  "#.####") + "  Δ" + str.tostring(vi_diff, "#.####"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 8, "VI− " + str.tostring(vi_minus, "#.####"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 8, s4_txt, text_color=TB, bgcolor=s4_col, text_size=size.small)
+
+    // ── row 9 : EMA context
+    ema_bull_now = ema_fast > ema_slow
+    table.cell(tbl, 0, 9, "EMA " + str.tostring(ema_fast_len) + "/" + str.tostring(ema_slow_len) + " (context)",
+         text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 9, str.tostring(ema_fast, "#.##"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 9, str.tostring(ema_slow, "#.##"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 9, ema_bull_now ? "BULL" : "BEAR",
+         text_color=ema_bull_now ? TB : TW, bgcolor=ema_bull_now ? C_BULL : C_BEAR, text_size=size.small)
+
+    // ── row 10 : Risk / R:R
+    rr = tp_pts / sl_pts
+    table.cell(tbl, 0, 10, "SL / TP",          text_color=TW, bgcolor=C_RISK, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 10, "SL: " + str.tostring(sl_pts, "#"),
+         text_color=color.new(color.red,  0), bgcolor=C_RISK, text_size=size.small)
+    table.cell(tbl, 2, 10, "TP: " + str.tostring(tp_pts, "#"),
+         text_color=color.new(color.lime, 0), bgcolor=C_RISK, text_size=size.small)
+    table.cell(tbl, 3, 10, "R:R 1:" + str.tostring(rr, "#.#"),
+         text_color=color.new(color.yellow, 0), bgcolor=C_RISK, text_size=size.small)
+
+    // ── row 11 : Gate breakdown (shows which step is blocking)
+    gate_b = (macd_bull ? "①✓" : "①✗") + " " + (rsi_bull ? "②✓" : "②✗") + " " + (di_bull_ok ? "③✓" : "③✗") + " " + (vortex_bull_ok ? "④✓" : "④✗")
+    gate_s = (macd_bear ? "①✓" : "①✗") + " " + (rsi_bear ? "②✓" : "②✗") + " " + (di_bear_ok ? "③✓" : "③✗") + " " + (vortex_bear_ok ? "④✓" : "④✗")
+    table.cell(tbl, 0, 11, "GATE",        text_color=TW, bgcolor=C_HDR, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(tbl, 1, 11, "▲ " + gate_b, text_color=color.new(color.lime, 0), bgcolor=C_HDR, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(tbl, 2, 11, "",             text_color=TW, bgcolor=C_HDR, text_size=size.tiny)
+    table.cell(tbl, 3, 11, "▼ " + gate_s, text_color=color.new(color.red, 20), bgcolor=C_HDR, text_size=size.tiny, text_halign=text.align_left)
+
+    // ── row 12 : Overall
+    o_col = all_bull ? C_BULL : all_bear ? C_BEAR : C_NEUT
+    o_txt = all_bull ? "▲ BUY" : all_bear ? "▼ SELL" : "NO SIG"
+    o_tc  = all_bull ? TB : TW
+    table.cell(tbl, 0, 12, "OVERALL SIGNAL [v2]", text_color=TW, bgcolor=C_HDR, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 12, in_trade ? (trade_dir == 1 ? "IN: LONG" : "IN: SHORT") : "FLAT",
+         text_color=TW, bgcolor=C_HDR, text_size=size.small)
+    table.cell(tbl, 2, 12, "", text_color=TW, bgcolor=C_HDR, text_size=size.small)
+    table.cell(tbl, 3, 12, o_txt, text_color=o_tc, bgcolor=o_col, text_size=size.normal)
+
+// ───────────────────────────────────────────────────────────────────
+// ALERTS  — fire alert() so TradingView webhook → Telegram works
+// Set up ONE alert in TradingView using "Any alert() function call"
+// and point the Webhook URL to your Telegram bot endpoint.
+// ───────────────────────────────────────────────────────────────────
+if barstate.isconfirmed
+
+    // ── Trade exit
+    if exit_now
+        _dir  = trade_dir == 1 ? "LONG" : "SHORT"
+        _pnl  = str.tostring(trade_dir == 1 ? close - trade_entry : trade_entry - close, "#.##")
+        msg   = "<b>TRADE EXIT " + exit_reason + "</b>\n<b>Symbol:</b> " + f_sym_lbl() + " | TF: " + timeframe.period + "\n<b>Dir:</b> " + _dir + "  <b>Entry:</b> " + str.tostring(trade_entry, "#.##") + "  <b>Exit:</b> " + str.tostring(close, "#.##") + "\n<b>P&L:</b> " + _pnl + " pts"
+        alert(f_tg(msg), alert.freq_once_per_bar_close)
+
+    // ── BUY signal
+    if bull_signal
+        msg = "<b>BUY SIGNAL v2</b>\n<b>Symbol:</b> " + f_sym_lbl() + " | TF: " + timeframe.period + "\n<b>Price:</b> " + str.tostring(close, "#.##") + "  MACD:BULL RSI:BULL\n<b>DI+:</b> " + str.tostring(diplus, "#.##") + "  <b>DI-:</b> " + str.tostring(diminus, "#.##") + "\n<b>SL:</b> " + str.tostring(close - sl_pts, "#.##") + "  <b>TP:</b> " + str.tostring(close + tp_pts, "#.##")
+        alert(f_tg(msg), alert.freq_once_per_bar_close)
+
+    // ── SELL signal
+    if bear_signal
+        msg = "<b>SELL SIGNAL v2</b>\n<b>Symbol:</b> " + f_sym_lbl() + " | TF: " + timeframe.period + "\n<b>Price:</b> " + str.tostring(close, "#.##") + "  MACD:BEAR RSI:BEAR\n<b>DI+:</b> " + str.tostring(diplus, "#.##") + "  <b>DI-:</b> " + str.tostring(diminus, "#.##") + "\n<b>SL:</b> " + str.tostring(close + sl_pts, "#.##") + "  <b>TP:</b> " + str.tostring(close - tp_pts, "#.##")
+        alert(f_tg(msg), alert.freq_once_per_bar_close)
+
+    // ── Pre-alert BULL (only on first bar it triggers)
+    if pre_alert_bull and not pre_alert_bull[1]
+        msg = "<b>PRE-ALERT: BULL Setup</b>\n<b>Symbol:</b> " + f_sym_lbl() + " | TF: " + timeframe.period + "\n<b>DI+:</b> " + str.tostring(diplus, "#.##") + " (+" + str.tostring(diplus_chg, "#.#") + "pts)  <b>DI-:</b> " + str.tostring(diminus, "#.##") + " (" + str.tostring(diminus_chg, "#.#") + "pts)\nDI- dominant but converging"
+        alert(f_tg(msg), alert.freq_once_per_bar_close)
+
+    // ── Pre-alert BEAR (only on first bar it triggers)
+    if pre_alert_bear and not pre_alert_bear[1]
+        msg = "<b>PRE-ALERT: BEAR Setup</b>\n<b>Symbol:</b> " + f_sym_lbl() + " | TF: " + timeframe.period + "\n<b>DI-:</b> " + str.tostring(diminus, "#.##") + " (+" + str.tostring(diminus_chg, "#.#") + "pts)  <b>DI+:</b> " + str.tostring(diplus, "#.##") + " (" + str.tostring(diplus_chg, "#.#") + "pts)\nDI+ dominant but converging"
+        alert(f_tg(msg), alert.freq_once_per_bar_close)
+
+    // ── MACD crosses (context alerts)
+    if macd_x_bull
+        msg = "<b>MACD Bull Cross</b>\n<b>Symbol:</b> " + f_sym_lbl() + " | TF: " + timeframe.period + "\nMACD crossed ABOVE signal | Hist: " + str.tostring(macd_hist, "#.####")
+        alert(f_tg(msg), alert.freq_once_per_bar_close)
+
+    if macd_x_bear
+        msg = "<b>MACD Bear Cross</b>\n<b>Symbol:</b> " + f_sym_lbl() + " | TF: " + timeframe.period + "\nMACD crossed BELOW signal | Hist: " + str.tostring(macd_hist, "#.####")
+        alert(f_tg(msg), alert.freq_once_per_bar_close)
+
+    // ── EMA crosses (context alerts)
+    if ema_cross_up
+        msg = "<b>EMA Bull Cross</b>\n<b>Symbol:</b> " + f_sym_lbl() + " | TF: " + timeframe.period + "\nEMA " + str.tostring(ema_fast_len) + " crossed ABOVE EMA " + str.tostring(ema_slow_len)
+        alert(f_tg(msg), alert.freq_once_per_bar_close)
+
+    if ema_cross_dn
+        msg = "<b>EMA Bear Cross</b>\n<b>Symbol:</b> " + f_sym_lbl() + " | TF: " + timeframe.period + "\nEMA " + str.tostring(ema_fast_len) + " crossed BELOW EMA " + str.tostring(ema_slow_len)
+        alert(f_tg(msg), alert.freq_once_per_bar_close)

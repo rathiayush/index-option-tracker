@@ -270,8 +270,6 @@ if barstate.isconfirmed and crossDown
 plot(0, "Opening Candle Baseline", color=color.new(color.gray, 20), linewidth=1, style=plot.style_line)
 plot(useRaw ? ceRawChart : na, "CE OBV Raw", color=color.new(color.lime, 0), linewidth=2)
 plot(useRaw ? peRawChart : na, "PE OBV Raw", color=color.new(color.red, 0), linewidth=2)
-plot(not useRaw ? cePctEma : na, "CE OBV %", color=color.new(color.lime, 0), linewidth=2)
-plot(not useRaw ? pePctEma : na, "PE OBV %", color=color.new(color.red, 0), linewidth=2)
 
 // ===== Table =====
 f_pct_color(v) =>
@@ -349,9 +347,3 @@ if barstate.islast and showDayChangeTable
     table.cell(t2, 1, 3, na(ceDayChangePct) ? "No Data" : str.tostring(ceDayChangePct, "#.00") + "%", bgcolor=color.new(color.gray, 85), text_color=f_pct_color(ceDayChangePct), text_size=size.small)
     table.cell(t2, 2, 3, na(peDayChangePct) ? "No Data" : str.tostring(peDayChangePct, "#.00") + "%", bgcolor=color.new(color.gray, 85), text_color=f_pct_color(peDayChangePct), text_size=size.small)
 
-    netObv      = ceActive - peActive
-    netObvLabel = netObv > 0 ? "BULLISH" : netObv < 0 ? "BEARISH" : "NEUTRAL"
-    netObvColor = netObv > 0 ? color.lime  : netObv < 0 ? color.red  : color.gray
-    table.cell(t2, 0, 4, "Net OBV (CE-PE)", bgcolor=color.new(color.gray, 80), text_color=color.white,  text_size=size.small)
-    table.cell(t2, 1, 4, f_fmt_chart(netObv) + "  " + netObvLabel, bgcolor=color.new(color.gray, 85), text_color=netObvColor, text_size=size.small)
-    table.cell(t2, 2, 4, "", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
