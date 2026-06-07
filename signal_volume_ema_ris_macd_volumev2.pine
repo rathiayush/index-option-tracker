@@ -1,0 +1,855 @@
+//@version=5
+indicator("EMA/RSI/ADX/Vortex/MACD Signal Arrows v3 + Vol Snapshot", overlay=true, max_labels_count=500, dynamic_requests=true)
+
+// ═══════════════════════════════════════════════════════════════════
+// SIGNAL FLOW
+//  Step 1 ─ MACD line above/below signal (direction only, no recency gate)
+//  Step 2 ─ RSI above/below its SMA     (direction only, no recency gate)
+//  Step 3 ─ DI+ vs DI– gap ≥ threshold  +  DI cross within N bars
+//  Step 4 ─ Vortex: VI cross happened + VI+/VI– diverging continuously
+//
+//  v3 changes vs v2:
+//   • MACD & RSI gates: recency lookback removed — direction-only
+//   • TIME exit: if all_bull/all_bear still active on exit bar, fires a
+//     ⟳ RE-ENTRY signal immediately (same bar, after trade is closed)
+// ═══════════════════════════════════════════════════════════════════
+
+// ───────────────────────────────────────────────────────────────────
+// INPUTS — INDEX & STRIKE  (pinned to top so they appear first in UI)
+// ───────────────────────────────────────────────────────────────────
+snap_index = input.string("NIFTY", "Index",
+     options=["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"], group="① Index & Strike")
+snap_atm   = input.int(24000,  "ATM Strike",                                  group="① Index & Strike")
+
+// ───────────────────────────────────────────────────────────────────
+// INPUTS — ORIGINAL
+// ───────────────────────────────────────────────────────────────────
+ema_fast_len        = input.int(9,    "EMA Fast Length",                    group="EMA (context)")
+ema_slow_len        = input.int(21,   "EMA Slow Length",                    group="EMA (context)")
+
+macd_fast           = input.int(12,   "MACD Fast EMA",                      group="Step 1 · MACD Trigger")
+macd_slow_i         = input.int(26,   "MACD Slow EMA",                      group="Step 1 · MACD Trigger")
+macd_sig_len        = input.int(9,    "MACD Signal EMA",                    group="Step 1 · MACD Trigger")
+
+rsi_len             = input.int(14,   "RSI Length",                         group="Step 2 · RSI Check")
+rsi_sma_len         = input.int(14,   "RSI SMA (Signal) Length",            group="Step 2 · RSI Check")
+
+adx_len             = input.int(14,   "ADX/DI Length",                      group="Step 3 · DI Check")
+di_diff_min         = input.float(10, "Min |DI+ – DI–| Gap",               group="Step 3 · DI Check", minval=1)
+di_cross_bars       = input.int(5,    "DI Cross Lookback (bars)",           group="Step 3 · DI Check", minval=1, maxval=20)
+pre_alert_pts       = input.float(15, "Pre-Alert: DI Move Threshold (pts)", group="Step 3 · DI Check", minval=1)
+pre_alert_bars      = input.int(5,    "Pre-Alert: DI Move Lookback (bars)", group="Step 3 · DI Check", minval=1, maxval=50)
+adx_min             = input.float(15, "Min ADX for Signal",                 group="Step 3 · DI Check", minval=0, step=1)
+
+vortex_len          = input.int(14,    "Vortex Length",                     group="Step 4 · Vortex")
+vortex_confirm_bars = input.int(6,     "VI Cross Lookback (bars)",          group="Step 4 · Vortex", minval=1, maxval=20)
+vortex_diff_min     = input.float(0.12,"Min VI+/VI– Difference (OR gate)",  group="Step 4 · Vortex", minval=0.001, step=0.01)
+vortex_mandatory    = input.bool(false, "Vortex Required for Signal",        group="Step 4 · Vortex")
+
+sl_pts              = input.float(25,  "Stop Loss (Points)",                group="Risk Management")
+tp_pts              = input.float(150, "Take Profit (Points)",              group="Risk Management")
+exit_mins           = input.int(15,    "Max Hold Time (minutes)",           group="Risk Management", minval=1)
+
+tg_chat_id          = input.string("-1003533948678", "Telegram Chat ID",    group="Telegram Alerts")
+tg_symbol           = input.string("",  "Symbol label in alerts (optional)",group="Telegram Alerts")
+
+show_table          = input.bool(false, "Show Dashboard",                   group="Display")
+show_ema            = input.bool(true,  "Show EMA Lines",                   group="Display")
+show_ema_cross      = input.bool(true,  "Show EMA Cross Diamonds",          group="Display")
+high_prob_only      = input.bool(false, "High Probability Only (Vol Confirmed)", group="Display")
+tbl_pos             = input.string("Top Right", "Table Position",
+     options=["Top Right","Top Left","Bottom Right","Bottom Left"],         group="Display")
+
+// ───────────────────────────────────────────────────────────────────
+// INPUTS — VOLUME SNAPSHOT
+// ───────────────────────────────────────────────────────────────────
+snap_lookback = input.int(5,     "Pre-Signal Lookback (bars)",            group="Vol Snapshot", minval=1, maxval=50)
+snap_smooth   = input.int(9,      "CDV/OBV/NetVol EMA Smooth",             group="Vol Snapshot", minval=1)
+snap_show_cdv = input.bool(true,  "Show CDV Snapshot",                     group="Vol Snapshot")
+snap_show_obv = input.bool(true,  "Show OBV Snapshot",                     group="Vol Snapshot")
+snap_show_nv  = input.bool(true,  "Show Net Volume Snapshot",              group="Vol Snapshot")
+hc_pct_thresh = input.float(35,  "High Confidence: Min Vol Δ% at Signal", group="Vol Snapshot", minval=5, step=5)
+
+// ───────────────────────────────────────────────────────────────────
+// TELEGRAM HELPERS
+// ───────────────────────────────────────────────────────────────────
+f_json(txt) =>
+    str.replace_all(str.replace_all(txt, "\n", "\\n"), '"', '\\"')
+
+f_tg(html) =>
+    '{"chat_id":"' + tg_chat_id + '","parse_mode":"HTML","text":"' + f_json(html) + '"}'
+
+f_sym_lbl() =>
+    tg_symbol != "" ? tg_symbol : syminfo.ticker
+
+// ───────────────────────────────────────────────────────────────────
+// EMA
+// ───────────────────────────────────────────────────────────────────
+ema_fast     = ta.ema(close, ema_fast_len)
+ema_slow     = ta.ema(close, ema_slow_len)
+ema_cross_up = ta.crossover(ema_fast, ema_slow)
+ema_cross_dn = ta.crossunder(ema_fast, ema_slow)
+
+plot(show_ema ? ema_fast : na, "EMA Fast", color=color.new(color.aqua,   0), linewidth=2)
+plot(show_ema ? ema_slow : na, "EMA Slow", color=color.new(color.orange, 0), linewidth=2)
+plotshape(show_ema_cross and ema_cross_up, title="EMA Bull Cross",
+     style=shape.diamond, location=location.belowbar, color=color.new(color.aqua,   0), size=size.tiny)
+plotshape(show_ema_cross and ema_cross_dn, title="EMA Bear Cross",
+     style=shape.diamond, location=location.abovebar, color=color.new(color.orange, 0), size=size.tiny)
+
+// ───────────────────────────────────────────────────────────────────
+// STEP 1 · MACD  — direction only, no recency lookback gate
+// ───────────────────────────────────────────────────────────────────
+macd_fast_ema = ta.ema(close, macd_fast)
+macd_slow_ema = ta.ema(close, macd_slow_i)
+macd_line     = macd_fast_ema - macd_slow_ema
+macd_sig_line = ta.ema(macd_line, macd_sig_len)
+macd_hist     = macd_line - macd_sig_line
+
+macd_bull = macd_line > macd_sig_line
+macd_bear = macd_line < macd_sig_line
+
+macd_bull_recent = ta.crossover(macd_line,  macd_sig_line)
+macd_bear_recent = ta.crossunder(macd_line, macd_sig_line)
+
+macd_x_bull = ta.crossover(macd_line,  macd_sig_line) and macd_hist > 0
+macd_x_bear = ta.crossunder(macd_line, macd_sig_line) and macd_hist < 0
+
+// ───────────────────────────────────────────────────────────────────
+// STEP 2 · RSI  — direction only, no recency lookback gate
+// ───────────────────────────────────────────────────────────────────
+rsi_val  = ta.rsi(close, rsi_len)
+rsi_sma  = ta.sma(rsi_val, rsi_sma_len)
+
+rsi_bull = rsi_val > rsi_sma
+rsi_bear = rsi_val < rsi_sma
+
+rsi_bull_recent = ta.crossover(rsi_val,  rsi_sma)
+rsi_bear_recent = ta.crossunder(rsi_val, rsi_sma)
+
+// ───────────────────────────────────────────────────────────────────
+// STEP 3 · ADX + DI
+// ───────────────────────────────────────────────────────────────────
+_tr  = math.max(math.max(high - low, math.abs(high - nz(close[1]))), math.abs(low - nz(close[1])))
+_dmp = high - nz(high[1]) > nz(low[1]) - low ? math.max(high - nz(high[1]), 0) : 0
+_dmm = nz(low[1]) - low > high - nz(high[1])  ? math.max(nz(low[1]) - low,  0) : 0
+
+var float _str  = 0.0
+var float _sdmp = 0.0
+var float _sdmm = 0.0
+_str  := nz(_str[1])  - nz(_str[1])  / adx_len + _tr
+_sdmp := nz(_sdmp[1]) - nz(_sdmp[1]) / adx_len + _dmp
+_sdmm := nz(_sdmm[1]) - nz(_sdmm[1]) / adx_len + _dmm
+
+diplus  = _sdmp / _str * 100
+diminus = _sdmm / _str * 100
+dx      = math.abs(diplus - diminus) / (diplus + diminus) * 100
+adx_val = ta.sma(dx, adx_len)
+
+max_bars_back(diplus,  51)
+max_bars_back(diminus, 51)
+
+di_diff        = diplus - diminus
+di_gap_bull_ok = di_diff  >= di_diff_min
+di_gap_bear_ok = -di_diff >= di_diff_min
+
+di_x_bull_recent = false
+di_x_bear_recent = false
+for i = 0 to di_cross_bars - 1
+    if diplus[i]  > diminus[i] and diplus[i + 1] <= diminus[i + 1]
+        di_x_bull_recent := true
+    if diminus[i] > diplus[i]  and diminus[i + 1] <= diplus[i + 1]
+        di_x_bear_recent := true
+
+di_bull_ok = di_gap_bull_ok and di_x_bull_recent
+di_bear_ok = di_gap_bear_ok and di_x_bear_recent
+
+diplus_chg  = diplus  - diplus[pre_alert_bars]
+diminus_chg = diminus - diminus[pre_alert_bars]
+
+pre_alert_bull = diminus > diplus and diplus_chg >= pre_alert_pts and diminus_chg <= -pre_alert_pts
+pre_alert_bear = diplus > diminus and diminus_chg >= pre_alert_pts and diplus_chg <= -pre_alert_pts
+
+// ───────────────────────────────────────────────────────────────────
+// STEP 4 · VORTEX
+// ───────────────────────────────────────────────────────────────────
+_vmp   = math.abs(high - low[1])
+_vmm   = math.abs(low  - high[1])
+_vstr  = math.sum(ta.atr(1), vortex_len)
+vi_plus  = math.sum(_vmp, vortex_len) / _vstr
+vi_minus = math.sum(_vmm, vortex_len) / _vstr
+
+max_bars_back(vi_plus,  20)
+max_bars_back(vi_minus, 20)
+
+var int vi_bull_age = 999
+var int vi_bear_age = 999
+vi_bull_age := vi_plus > vi_minus and vi_plus[1] <= vi_minus[1] ? 0 : math.min(vi_bull_age + 1, 999)
+vi_bear_age := vi_minus > vi_plus and vi_minus[1] <= vi_plus[1] ? 0 : math.min(vi_bear_age + 1, 999)
+
+vi_diff = vi_plus - vi_minus
+
+vortex_bull_ok = vi_plus > vi_minus and (vi_bull_age <= vortex_confirm_bars or vi_diff >= vortex_diff_min)
+vortex_bear_ok = vi_minus > vi_plus and (vi_bear_age <= vortex_confirm_bars or (-vi_diff) >= vortex_diff_min)
+
+// ═══════════════════════════════════════════════════════════════════
+// VOLUME SNAPSHOT ENGINE
+// ═══════════════════════════════════════════════════════════════════
+snap_step = snap_index == "BANKNIFTY" ? 100 : snap_index == "FINNIFTY" ? 50 : snap_index == "MIDCPNIFTY" ? 25 : snap_index == "SENSEX" ? 100 : snap_index == "BANKEX" ? 100 : 50
+
+f_2d(n) =>
+    int(n) < 10 ? "0" + str.tostring(int(n)) : str.tostring(int(n))
+
+f_exp_code(yy, mm, dd) =>
+    str.tostring(int(yy)) + f_2d(int(mm)) + f_2d(int(dd))
+
+_curYY  = int(year(timenow)  % 100)
+_curMon = month(timenow)
+_curDay = dayofmonth(timenow)
+
+f_nifty_exp() =>
+    today_mmdd = _curMon * 100 + _curDay
+    expiries = array.from(505, 512, 519, 526, 602, 609, 616, 623, 630, 707, 714, 721, 728, 804, 811, 818, 825, 901, 908, 915, 922, 929, 1006, 1013, 1019, 1027, 1103, 1110, 1117, 1124, 1201, 1208, 1215, 1222, 1229)
+    picked = 1229
+    for i = 0 to array.size(expiries) - 1
+        v = array.get(expiries, i)
+        if today_mmdd <= v
+            picked := v
+            break
+    f_exp_code(_curYY, math.floor(picked / 100), picked - math.floor(picked / 100) * 100)
+
+f_bnf_exp_day(mm) =>
+    switch mm
+        1  => 27
+        2  => 24
+        3  => 30
+        4  => 28
+        5  => 26
+        6  => 30
+        7  => 28
+        8  => 25
+        9  => 29
+        10 => 19
+        11 => 23
+        12 => 29
+        => 28
+
+f_bnf_exp() =>
+    mm   = _curMon
+    yy   = _curYY
+    eDay = f_bnf_exp_day(mm)
+    if _curDay > eDay
+        mm   := mm == 12 ? 1 : mm + 1
+        yy   := mm == 1 ? yy + 1 : yy
+        eDay := f_bnf_exp_day(mm)
+    f_exp_code(yy, mm, eDay)
+
+f_thu_exp() =>
+    dow = dayofweek(timenow, "Asia/Kolkata")
+    da  = dow <= 5 ? 5 - dow : 7 - dow + 5
+    ts  = timenow + da * 86400000
+    f_exp_code(int(year(ts, "Asia/Kolkata") % 100), month(ts, "Asia/Kolkata"), dayofmonth(ts, "Asia/Kolkata"))
+
+f_tue_exp() =>
+    dow = dayofweek(timenow, "Asia/Kolkata")
+    da  = dow <= 3 ? 3 - dow : 7 - dow + 3
+    ts  = timenow + da * 86400000
+    f_exp_code(int(year(ts, "Asia/Kolkata") % 100), month(ts, "Asia/Kolkata"), dayofmonth(ts, "Asia/Kolkata"))
+
+snap_expiry = snap_index == "BANKNIFTY" ? f_bnf_exp() : snap_index == "NIFTY" ? f_nifty_exp() : snap_index == "SENSEX" ? f_thu_exp() : snap_index == "BANKEX" ? f_thu_exp() : f_tue_exp()
+
+f_vsym(_strike, _isCall) =>
+    str.upper(snap_index) + snap_expiry + (_isCall ? "C" : "P") + str.tostring(int(_strike))
+
+f_ul_sym(_name) =>
+    switch _name
+        "NIFTY"      => "NSE:NIFTY"
+        "BANKNIFTY"  => "NSE:BANKNIFTY"
+        "FINNIFTY"   => "NSE:FINNIFTY"
+        "MIDCPNIFTY" => "NSE:MIDCPNIFTY"
+        "SENSEX"     => "BSE:SENSEX"
+        "BANKEX"     => "BSE:BANKEX"
+        => "NSE:NIFTY"
+
+snap_spot = request.security(f_ul_sym(snap_index), timeframe.period, close)
+
+f_delta_wt(_strike, _isCall, _spot) =>
+    mono = (_strike - _spot) / _spot
+    raw  = _isCall ? 1 / (1 + math.exp(-1.7 * -mono * 5)) : -1 / (1 + math.exp(-1.7 * mono * 5))
+    math.abs(raw)
+
+f_cdv_sym(_sym, _strike, _isCall) =>
+    dw      = f_delta_wt(_strike, _isCall, snap_spot)
+    hl      = high - low
+    bar_cdv = hl > 0.0001 ? (((close - low) / hl - (high - close) / hl) * volume * dw) : 0.0
+    request.security(_sym, timeframe.period, ta.cum(bar_cdv), lookahead=barmerge.lookahead_off)
+
+f_obv_sym(_sym, _strike, _isCall) =>
+    dw      = f_delta_wt(_strike, _isCall, snap_spot)
+    bar_obv = math.sign(ta.change(close)) * volume * dw
+    request.security(_sym, timeframe.period, ta.cum(bar_obv), lookahead=barmerge.lookahead_off)
+
+f_nv_sym(_sym, _strike, _isCall) =>
+    dw     = f_delta_wt(_strike, _isCall, snap_spot)
+    bar_nv = volume * ta.change(close) * dw
+    request.security(_sym, timeframe.period, ta.cum(bar_nv), lookahead=barmerge.lookahead_off)
+
+// ── Strike list (6 per side, ATM-3 to ATM+2) ─────────────────────
+cs0  = snap_atm
+cs1  = snap_atm + snap_step
+cs2  = snap_atm + 2 * snap_step
+csm1 = snap_atm - snap_step
+csm2 = snap_atm - 2 * snap_step
+csm3 = snap_atm - 3 * snap_step
+
+ps0  = snap_atm
+ps1  = snap_atm + snap_step
+ps2  = snap_atm + 2 * snap_step
+psm1 = snap_atm - snap_step
+psm2 = snap_atm - 2 * snap_step
+psm3 = snap_atm - 3 * snap_step
+
+cdv_ce_raw = nz(f_cdv_sym(f_vsym(cs0, true),cs0,true))+nz(f_cdv_sym(f_vsym(cs1, true),cs1,true))+nz(f_cdv_sym(f_vsym(cs2, true),cs2,true))+nz(f_cdv_sym(f_vsym(csm1,true),csm1,true))+nz(f_cdv_sym(f_vsym(csm2,true),csm2,true))+nz(f_cdv_sym(f_vsym(csm3,true),csm3,true))
+cdv_pe_raw = nz(f_cdv_sym(f_vsym(ps0,false),ps0,false))+nz(f_cdv_sym(f_vsym(ps1,false),ps1,false))+nz(f_cdv_sym(f_vsym(ps2,false),ps2,false))+nz(f_cdv_sym(f_vsym(psm1,false),psm1,false))+nz(f_cdv_sym(f_vsym(psm2,false),psm2,false))+nz(f_cdv_sym(f_vsym(psm3,false),psm3,false))
+obv_ce_raw = nz(f_obv_sym(f_vsym(cs0, true),cs0,true))+nz(f_obv_sym(f_vsym(cs1, true),cs1,true))+nz(f_obv_sym(f_vsym(cs2, true),cs2,true))+nz(f_obv_sym(f_vsym(csm1,true),csm1,true))+nz(f_obv_sym(f_vsym(csm2,true),csm2,true))+nz(f_obv_sym(f_vsym(csm3,true),csm3,true))
+obv_pe_raw = nz(f_obv_sym(f_vsym(ps0,false),ps0,false))+nz(f_obv_sym(f_vsym(ps1,false),ps1,false))+nz(f_obv_sym(f_vsym(ps2,false),ps2,false))+nz(f_obv_sym(f_vsym(psm1,false),psm1,false))+nz(f_obv_sym(f_vsym(psm2,false),psm2,false))+nz(f_obv_sym(f_vsym(psm3,false),psm3,false))
+nv_ce_raw  = nz(f_nv_sym(f_vsym(cs0, true),cs0,true))+nz(f_nv_sym(f_vsym(cs1, true),cs1,true))+nz(f_nv_sym(f_vsym(cs2, true),cs2,true))+nz(f_nv_sym(f_vsym(csm1,true),csm1,true))+nz(f_nv_sym(f_vsym(csm2,true),csm2,true))+nz(f_nv_sym(f_vsym(csm3,true),csm3,true))
+nv_pe_raw  = nz(f_nv_sym(f_vsym(ps0,false),ps0,false))+nz(f_nv_sym(f_vsym(ps1,false),ps1,false))+nz(f_nv_sym(f_vsym(ps2,false),ps2,false))+nz(f_nv_sym(f_vsym(psm1,false),psm1,false))+nz(f_nv_sym(f_vsym(psm2,false),psm2,false))+nz(f_nv_sym(f_vsym(psm3,false),psm3,false))
+
+cdv_ce = ta.ema(cdv_ce_raw, snap_smooth)
+cdv_pe = ta.ema(cdv_pe_raw, snap_smooth)
+obv_ce = ta.ema(obv_ce_raw, snap_smooth)
+obv_pe = ta.ema(obv_pe_raw, snap_smooth)
+nv_ce  = ta.ema(nv_ce_raw,  snap_smooth)
+nv_pe  = ta.ema(nv_pe_raw,  snap_smooth)
+
+// ─── Helpers ─────────────────────────────────────────────────────
+f_pct_chg(cur, base) =>
+    math.abs(nz(base)) > 0.001 ? (cur - base) / math.abs(base) * 100 : 0.0
+
+f_km(v) =>
+    av = math.abs(v)
+    av >= 1000000.0 ? str.tostring(v / 1000000.0, "#.00") + "M" :
+     av >= 1000.0   ? str.tostring(v / 1000.0,    "#.00") + "K" :
+     str.tostring(v, "#.0")
+
+f_pct_str(v) =>
+    (v >= 0 ? "+" : "") + str.tostring(v, "#.00") + "%"
+
+f_val_color(v) =>
+    v > 0 ? color.new(color.lime, 0) : v < 0 ? color.new(color.red, 0) : color.new(color.gray, 0)
+
+f_delta_str(v) =>
+    (v >= 0 ? "+" : "") + f_km(v)
+
+// ───────────────────────────────────────────────────────────────────
+// SIGNAL ASSEMBLY
+// ───────────────────────────────────────────────────────────────────
+vx_gate_bull = vortex_mandatory ? vortex_bull_ok : true
+vx_gate_bear = vortex_mandatory ? vortex_bear_ok : true
+
+adx_ok   = adx_val >= adx_min
+all_bull = macd_bull and rsi_bull and di_bull_ok and vx_gate_bull and adx_ok
+all_bear = macd_bear and rsi_bear and di_bear_ok and vx_gate_bear and adx_ok
+
+// ── Trade state ──────────────────────────────────────────────────
+var float trade_entry    = na
+var int   trade_bar      = na
+var int   trade_dir      = 0
+var bool  in_trade       = false
+var bool  time_exit_bar  = false
+
+tf_secs_intra = timeframe.multiplier * 60
+tf_secs_daily = timeframe.multiplier * 86400
+tf_secs       = timeframe.isintraday ? tf_secs_intra : timeframe.isdaily ? tf_secs_daily : 604800
+exit_bars     = math.max(1, math.round(exit_mins * 60 / tf_secs))
+
+var string exit_reason  = ""
+exit_now                = false
+time_exit_bar          := false
+
+if in_trade
+    bars_held     = bar_index - trade_bar
+    time_exit     = bars_held >= exit_bars
+    sl_long_exit  = trade_dir ==  1 and low  <= trade_entry - sl_pts
+    tp_long_exit  = trade_dir ==  1 and high >= trade_entry + tp_pts
+    sl_short_exit = trade_dir == -1 and high >= trade_entry + sl_pts
+    tp_short_exit = trade_dir == -1 and low  <= trade_entry - tp_pts
+
+    if tp_long_exit or tp_short_exit
+        exit_reason := "TP ✅"
+        exit_now    := true
+    else if sl_long_exit or sl_short_exit
+        exit_reason := "SL ❌"
+        exit_now    := true
+    else if time_exit
+        exit_reason   := "TIME ⏱ " + str.tostring(exit_mins) + "m"
+        exit_now      := true
+        time_exit_bar := true
+
+if exit_now
+    is_tp     = str.contains(exit_reason, "TP")
+    is_sl     = str.contains(exit_reason, "SL")
+    exit_px   = trade_dir == 1 ? (is_tp ? trade_entry + tp_pts : is_sl ? trade_entry - sl_pts : close) : (is_tp ? trade_entry - tp_pts : is_sl ? trade_entry + sl_pts : close)
+    lbl_style = trade_dir == 1 ? label.style_label_down : label.style_label_up
+    lbl_y     = trade_dir == 1 ? high : low
+    lbl_loc   = trade_dir == 1 ? yloc.abovebar : yloc.belowbar
+    label.new(bar_index, lbl_y,
+         "EXIT " + exit_reason + "\n@ " + str.tostring(exit_px, "#.##"),
+         style=lbl_style, color=color.new(color.gray, 20),
+         textcolor=color.white, size=size.small, yloc=lbl_loc)
+    in_trade    := false
+    trade_dir   := 0
+    trade_entry := na
+
+// ── Raw signal conditions ────────────────────────────────────────
+bull_signal = all_bull and not in_trade
+bear_signal = all_bear and not in_trade
+
+// ─── Snapshot storage (always runs on signal so snap is current) ──
+var int    snap_dir       = 0
+var int    snap_bar_idx   = 0
+var string snap_dir_label = "—"
+
+var float snap_cdv_ce_prev = na
+var float snap_cdv_ce_now  = na
+var float snap_cdv_pe_prev = na
+var float snap_cdv_pe_now  = na
+var float snap_obv_ce_prev = na
+var float snap_obv_ce_now  = na
+var float snap_obv_pe_prev = na
+var float snap_obv_pe_now  = na
+var float snap_nv_ce_prev  = na
+var float snap_nv_ce_now   = na
+var float snap_nv_pe_prev  = na
+var float snap_nv_pe_now   = na
+
+if bull_signal or bear_signal
+    snap_dir       := bull_signal ? 1 : -1
+    snap_dir_label := bull_signal ? "▲ BUY" : "▼ SELL"
+    snap_bar_idx   := bar_index
+    snap_cdv_ce_prev := cdv_ce[snap_lookback]
+    snap_cdv_pe_prev := cdv_pe[snap_lookback]
+    snap_obv_ce_prev := obv_ce[snap_lookback]
+    snap_obv_pe_prev := obv_pe[snap_lookback]
+    snap_nv_ce_prev  := nv_ce[snap_lookback]
+    snap_nv_pe_prev  := nv_pe[snap_lookback]
+    snap_cdv_ce_now  := cdv_ce
+    snap_cdv_pe_now  := cdv_pe
+    snap_obv_ce_now  := obv_ce
+    snap_obv_pe_now  := obv_pe
+    snap_nv_ce_now   := nv_ce
+    snap_nv_pe_now   := nv_pe
+
+// ─── Running % change: live vs frozen signal value ───────────────
+cdv_ce_pct = f_pct_chg(cdv_ce, snap_cdv_ce_now)
+cdv_pe_pct = f_pct_chg(cdv_pe, snap_cdv_pe_now)
+obv_ce_pct = f_pct_chg(obv_ce, snap_obv_ce_now)
+obv_pe_pct = f_pct_chg(obv_pe, snap_obv_pe_now)
+nv_ce_pct  = f_pct_chg(nv_ce,  snap_nv_ce_now)
+nv_pe_pct  = f_pct_chg(nv_pe,  snap_nv_pe_now)
+
+// ─── Frozen % change: @ signal vs −N bars ────────────────────────
+sig_cdv_ce_pct = f_pct_chg(snap_cdv_ce_now, snap_cdv_ce_prev)
+sig_cdv_pe_pct = f_pct_chg(snap_cdv_pe_now, snap_cdv_pe_prev)
+sig_obv_ce_pct = f_pct_chg(snap_obv_ce_now, snap_obv_ce_prev)
+sig_obv_pe_pct = f_pct_chg(snap_obv_pe_now, snap_obv_pe_prev)
+sig_nv_ce_pct  = f_pct_chg(snap_nv_ce_now,  snap_nv_ce_prev)
+sig_nv_pe_pct  = f_pct_chg(snap_nv_pe_now,  snap_nv_pe_prev)
+
+// ─── High Confidence flag ────────────────────────────────────────
+hc_cdv_ce    = snap_dir ==  1 ? sig_cdv_ce_pct >=  hc_pct_thresh :
+               snap_dir == -1 ? sig_cdv_ce_pct <= -hc_pct_thresh : false
+hc_cdv_pe    = snap_dir ==  1 ? sig_cdv_pe_pct <= -hc_pct_thresh :
+               snap_dir == -1 ? sig_cdv_pe_pct >=  hc_pct_thresh : false
+hc_obv_ce    = snap_dir ==  1 ? sig_obv_ce_pct >=  hc_pct_thresh :
+               snap_dir == -1 ? sig_obv_ce_pct <= -hc_pct_thresh : false
+hc_obv_pe    = snap_dir ==  1 ? sig_obv_pe_pct <= -hc_pct_thresh :
+               snap_dir == -1 ? sig_obv_pe_pct >=  hc_pct_thresh : false
+hc_nv_ce     = snap_dir ==  1 ? sig_nv_ce_pct  >=  hc_pct_thresh :
+               snap_dir == -1 ? sig_nv_ce_pct  <= -hc_pct_thresh : false
+hc_nv_pe     = snap_dir ==  1 ? sig_nv_pe_pct  <= -hc_pct_thresh :
+               snap_dir == -1 ? sig_nv_pe_pct  >=  hc_pct_thresh : false
+
+is_high_conf = snap_dir != 0 and (hc_cdv_ce or hc_cdv_pe or hc_obv_ce or hc_obv_pe or hc_nv_ce or hc_nv_pe)
+
+// ─── High Probability gate ────────────────────────────────────────
+// When high_prob_only is ON, only signals with volume confirmation fire.
+// Snap is always captured on raw signal so data stays current.
+hp_ok = not high_prob_only or is_high_conf
+
+// ── Enter trade (gated by hp_ok) ─────────────────────────────────
+if bull_signal and hp_ok
+    in_trade    := true
+    trade_entry := close
+    trade_bar   := bar_index
+    trade_dir   := 1
+if bear_signal and hp_ok
+    in_trade    := true
+    trade_entry := close
+    trade_bar   := bar_index
+    trade_dir   := -1
+
+// ── SL / TP lines (gated by hp_ok) ───────────────────────────────
+var float ep   = na
+var line  sl_l = na
+var line  tp_l = na
+var label sl_b = na
+var label tp_b = na
+
+if bull_signal and hp_ok
+    ep := close
+    line.delete(sl_l), line.delete(tp_l), label.delete(sl_b), label.delete(tp_b)
+    sl_l := line.new(bar_index, ep - sl_pts, bar_index + exit_bars, ep - sl_pts,
+         color=color.new(color.red,  10), width=2, style=line.style_dashed)
+    tp_l := line.new(bar_index, ep + tp_pts, bar_index + exit_bars, ep + tp_pts,
+         color=color.new(color.lime, 10), width=2, style=line.style_dashed)
+    sl_b := label.new(bar_index + exit_bars + 1, ep - sl_pts,
+         "SL −" + str.tostring(sl_pts, "#") + "pts | " + str.tostring(exit_mins) + "m max",
+         style=label.style_label_left, color=color.new(color.red,  20), textcolor=color.white, size=size.tiny)
+    tp_b := label.new(bar_index + exit_bars + 1, ep + tp_pts,
+         "TP +" + str.tostring(tp_pts, "#") + "pts",
+         style=label.style_label_left, color=color.new(color.lime, 20), textcolor=color.black, size=size.tiny)
+
+if bear_signal and hp_ok
+    ep := close
+    line.delete(sl_l), line.delete(tp_l), label.delete(sl_b), label.delete(tp_b)
+    sl_l := line.new(bar_index, ep + sl_pts, bar_index + exit_bars, ep + sl_pts,
+         color=color.new(color.red,  10), width=2, style=line.style_dashed)
+    tp_l := line.new(bar_index, ep - tp_pts, bar_index + exit_bars, ep - tp_pts,
+         color=color.new(color.lime, 10), width=2, style=line.style_dashed)
+    sl_b := label.new(bar_index + exit_bars + 1, ep + sl_pts,
+         "SL +" + str.tostring(sl_pts, "#") + "pts | " + str.tostring(exit_mins) + "m max",
+         style=label.style_label_left, color=color.new(color.red,  20), textcolor=color.white, size=size.tiny)
+    tp_b := label.new(bar_index + exit_bars + 1, ep - tp_pts,
+         "TP −" + str.tostring(tp_pts, "#") + "pts",
+         style=label.style_label_left, color=color.new(color.lime, 20), textcolor=color.black, size=size.tiny)
+
+// ── Labels (gated by hp_ok) ───────────────────────────────────────
+if bull_signal and hp_ok
+    re_pfx = time_exit_bar ? "⟳ RE-ENTRY\n" : ""
+    label.new(bar_index, low,
+         (is_high_conf ? "🔥 HIGH CONF\n" : "") + re_pfx + "BUY\n@ " + str.tostring(close, "#.##"),
+         style=label.style_label_up,
+         color=is_high_conf ? color.new(color.yellow, 5) : color.new(color.lime, 10),
+         textcolor=color.black, size=size.normal, yloc=yloc.belowbar)
+if bear_signal and hp_ok
+    re_pfx = time_exit_bar ? "⟳ RE-ENTRY\n" : ""
+    label.new(bar_index, high,
+         (is_high_conf ? "🔥 HIGH CONF\n" : "") + re_pfx + "SELL\n@ " + str.tostring(close, "#.##"),
+         style=label.style_label_down,
+         color=is_high_conf ? color.new(color.yellow, 5) : color.new(color.red, 10),
+         textcolor=is_high_conf ? color.black : color.white, size=size.normal, yloc=yloc.abovebar)
+
+// ── Arrows: every bar when conditions met; filtered by hp_ok when flag is on
+// When high_prob_only=OFF → show on every bar conditions are met (original behaviour)
+// When high_prob_only=ON  → show only on the actual HC entry bar
+plotshape(all_bull and (not high_prob_only or (bull_signal and is_high_conf)),
+     title="BUY Arrow",  style=shape.arrowup,
+     location=location.belowbar, color=color.new(color.green, 0), size=size.normal)
+plotshape(all_bear and (not high_prob_only or (bear_signal and is_high_conf)),
+     title="SELL Arrow", style=shape.arrowdown,
+     location=location.abovebar, color=color.new(color.red,   0), size=size.normal)
+plotshape(pre_alert_bull, title="Pre-Alert Bull",
+     style=shape.triangleup, location=location.belowbar,
+     color=color.new(color.yellow, 0), size=size.small, text="⚡", textcolor=color.yellow)
+plotshape(pre_alert_bear, title="Pre-Alert Bear",
+     style=shape.triangledown, location=location.abovebar,
+     color=color.new(color.orange, 0), size=size.small, text="⚡", textcolor=color.orange)
+
+bgcolor(all_bull and (not high_prob_only or is_high_conf) ? color.new(color.lime, 92) : na, title="Bull Zone")
+bgcolor(all_bear and (not high_prob_only or is_high_conf) ? color.new(color.red,  92) : na, title="Bear Zone")
+
+// ═══════════════════════════════════════════════════════════════════
+// MAIN DASHBOARD  (4 cols × 13 rows)
+// ═══════════════════════════════════════════════════════════════════
+if show_table and barstate.islast
+    var _pos = tbl_pos == "Top Right"    ? position.top_right    :
+               tbl_pos == "Top Left"     ? position.top_left     :
+               tbl_pos == "Bottom Right" ? position.bottom_right :
+                                           position.bottom_left
+
+    var tbl = table.new(_pos, 4, 13,
+         border_width=1, border_color=color.new(color.gray, 50),
+         frame_width=2,  frame_color=color.new(color.white, 30))
+
+    C_BULL = color.new(color.lime,   15)
+    C_BEAR = color.new(color.red,    15)
+    C_OK   = color.new(color.lime,   20)
+    C_FAIL = color.new(color.orange, 20)
+    C_NEUT = color.new(color.gray,   40)
+    C_HDR  = color.new(#1a1a2e, 0)
+    C_ROW  = color.new(#16213e, 0)
+    C_RISK = color.new(#0d2137, 0)
+    TW     = color.white
+    TB     = color.black
+
+    table.cell(tbl, 0, 0, "STEP / INDICATOR",   text_color=TW, bgcolor=C_HDR, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 0, "VALUE 1",             text_color=TW, bgcolor=C_HDR, text_size=size.small)
+    table.cell(tbl, 2, 0, "VALUE 2",             text_color=TW, bgcolor=C_HDR, text_size=size.small)
+    table.cell(tbl, 3, 0, "STATUS",              text_color=TW, bgcolor=C_HDR, text_size=size.small)
+
+    table.cell(tbl, 0, 1, "① MACD Direction", text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 1, str.tostring(macd_line,     "#.####"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 1, str.tostring(macd_sig_line, "#.####"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 1, macd_bull ? "BULL ✓" : macd_bear ? "BEAR ✓" : "NEUTRAL",
+         text_color=TB, bgcolor=macd_bull ? C_BULL : macd_bear ? C_BEAR : C_NEUT, text_size=size.small)
+
+    table.cell(tbl, 0, 2, "   MACD Histogram", text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 2, str.tostring(macd_hist, "#.####"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 2, macd_bull_recent ? "↑ cross this bar" : macd_bear_recent ? "↓ cross this bar" : "—", text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 2, macd_line > macd_sig_line ? "BULL" : "BEAR",
+         text_color=macd_line > macd_sig_line ? TB : TW,
+         bgcolor=macd_line > macd_sig_line ? C_BULL : C_BEAR, text_size=size.small)
+
+    table.cell(tbl, 0, 3, "② RSI Direction", text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 3, str.tostring(rsi_val, "#.##"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 3, "SMA " + str.tostring(rsi_sma, "#.##") + (rsi_bull_recent ? " ↑cross" : rsi_bear_recent ? " ↓cross" : ""), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 3, rsi_bull ? "BULL ✓" : rsi_bear ? "BEAR ✓" : "NEUTRAL",
+         text_color=TB, bgcolor=rsi_bull ? C_BULL : rsi_bear ? C_BEAR : C_NEUT, text_size=size.small)
+
+    s3a_ok = di_gap_bull_ok or di_gap_bear_ok
+    table.cell(tbl, 0, 4, "③ |DI+−DI–| ≥ " + str.tostring(di_diff_min, "#") + " [CHECK]", text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 4, "DI+ " + str.tostring(diplus,  "#.##"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 4, "DI− " + str.tostring(diminus, "#.##"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 4, "Δ" + str.tostring(math.abs(di_diff), "#.#"), text_color=TB, bgcolor=s3a_ok ? C_OK : C_FAIL, text_size=size.small)
+
+    s3b_ok = di_x_bull_recent or di_x_bear_recent
+    table.cell(tbl, 0, 5, "   DI Cross ≤ " + str.tostring(di_cross_bars) + " bars", text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 5, di_x_bull_recent ? "BULL ✓" : "—", text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 5, di_x_bear_recent ? "BEAR ✓" : "—", text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 5, s3b_ok ? "RECENT ✓" : "STALE", text_color=TB, bgcolor=s3b_ok ? C_OK : C_FAIL, text_size=size.small)
+
+    pa_ok     = pre_alert_bull or pre_alert_bear
+    pa_txt    = pre_alert_bull ? "⚡ BULL SETUP" : pre_alert_bear ? "⚡ BEAR SETUP" : "—"
+    pa_col    = pre_alert_bull ? color.new(color.yellow, 20) : pre_alert_bear ? color.new(color.orange, 20) : C_NEUT
+    pa_dp_str = str.tostring(diplus_chg,  "#.#")
+    pa_dm_str = str.tostring(diminus_chg, "#.#")
+    pa_di_chg = pre_alert_bull ? "+Δ" + pa_dp_str + "  −Δ" + pa_dm_str : pre_alert_bear ? "−Δ" + pa_dm_str + "  +Δ" + pa_dp_str : "—"
+    table.cell(tbl, 0, 6, "   ⚡ Pre-Alert DI ±" + str.tostring(pre_alert_pts, "#") + "pts / " + str.tostring(pre_alert_bars) + "bars", text_color=color.new(color.yellow, 0), bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 6, pa_di_chg, text_color=TW, bgcolor=C_ROW, text_size=size.tiny)
+    table.cell(tbl, 2, 6, "",         text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 6, pa_txt,     text_color=TB, bgcolor=pa_col, text_size=size.small)
+
+    adx_pass       = adx_val >= adx_min
+    adx_rising_now = adx_val > adx_val[1]
+    table.cell(tbl, 0, 7, "   ADX ≥ " + str.tostring(adx_min, "#") + " [FILTER]", text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 7, str.tostring(adx_val, "#.##"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 7, adx_rising_now ? "↑ rising" : "↓ flat/fall", text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 7, adx_pass ? "OK ✓" : "WEAK ✗", text_color=TB, bgcolor=adx_pass ? C_OK : C_FAIL, text_size=size.small)
+
+    s4_bull     = vortex_bull_ok
+    s4_bear     = vortex_bear_ok
+    s4_ok       = s4_bull or s4_bear
+    s4_lbl      = vortex_mandatory ? "④ Vortex [REQUIRED]" : "④ Vortex [support]"
+    s4_via_x    = s4_bull ? vi_bull_age <= vortex_confirm_bars : vi_bear_age <= vortex_confirm_bars
+    s4_via_diff = s4_bull ? vi_diff >= vortex_diff_min : (-vi_diff) >= vortex_diff_min
+    s4_how      = s4_ok ? (s4_via_x and s4_via_diff ? "X+Δ ✓" : s4_via_x ? "X ✓" : "Δ ✓") : "NONE"
+    s4_txt      = s4_bull ? "BULL " + s4_how : s4_bear ? "BEAR " + s4_how : "WAITING"
+    s4_col      = s4_ok ? C_OK : (vortex_mandatory ? C_FAIL : C_NEUT)
+    table.cell(tbl, 0, 8, s4_lbl, text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 8, "VI+ " + str.tostring(vi_plus,  "#.####") + "  Δ" + str.tostring(vi_diff, "#.####"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 8, "VI− " + str.tostring(vi_minus, "#.####"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 8, s4_txt, text_color=TB, bgcolor=s4_col, text_size=size.small)
+
+    ema_bull_now = ema_fast > ema_slow
+    table.cell(tbl, 0, 9, "EMA " + str.tostring(ema_fast_len) + "/" + str.tostring(ema_slow_len) + " (context)", text_color=TW, bgcolor=C_ROW, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 9, str.tostring(ema_fast, "#.##"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 2, 9, str.tostring(ema_slow, "#.##"), text_color=TW, bgcolor=C_ROW, text_size=size.small)
+    table.cell(tbl, 3, 9, ema_bull_now ? "BULL" : "BEAR", text_color=ema_bull_now ? TB : TW, bgcolor=ema_bull_now ? C_BULL : C_BEAR, text_size=size.small)
+
+    rr = tp_pts / sl_pts
+    table.cell(tbl, 0, 10, "SL / TP", text_color=TW, bgcolor=C_RISK, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 10, "SL: " + str.tostring(sl_pts, "#"), text_color=color.new(color.red,  0), bgcolor=C_RISK, text_size=size.small)
+    table.cell(tbl, 2, 10, "TP: " + str.tostring(tp_pts, "#"), text_color=color.new(color.lime, 0), bgcolor=C_RISK, text_size=size.small)
+    table.cell(tbl, 3, 10, "R:R 1:" + str.tostring(rr, "#.#"), text_color=color.new(color.yellow, 0), bgcolor=C_RISK, text_size=size.small)
+
+    gate_b = (macd_bull ? "①✓" : "①✗") + " " + (rsi_bull ? "②✓" : "②✗") + " " + (di_bull_ok ? "③✓" : "③✗") + " " + (vortex_bull_ok ? "④✓" : "④✗") + " " + (adx_pass ? "ADX✓" : "ADX✗")
+    gate_s = (macd_bear ? "①✓" : "①✗") + " " + (rsi_bear ? "②✓" : "②✗") + " " + (di_bear_ok ? "③✓" : "③✗") + " " + (vortex_bear_ok ? "④✓" : "④✗") + " " + (adx_pass ? "ADX✓" : "ADX✗")
+    table.cell(tbl, 0, 11, "GATE",        text_color=TW, bgcolor=C_HDR, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(tbl, 1, 11, "▲ " + gate_b, text_color=color.new(color.lime, 0), bgcolor=C_HDR, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(tbl, 2, 11, "",             text_color=TW, bgcolor=C_HDR, text_size=size.tiny)
+    table.cell(tbl, 3, 11, "▼ " + gate_s, text_color=color.new(color.red, 20), bgcolor=C_HDR, text_size=size.tiny, text_halign=text.align_left)
+
+    o_col = all_bull ? C_BULL : all_bear ? C_BEAR : C_NEUT
+    o_txt = all_bull ? "▲ BUY" : all_bear ? "▼ SELL" : "NO SIG"
+    o_tc  = all_bull ? TB : TW
+    hpo_tag = high_prob_only ? " [HP]" : ""
+    table.cell(tbl, 0, 12, "OVERALL SIGNAL [v3]" + hpo_tag, text_color=TW, bgcolor=C_HDR, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 12, in_trade ? (trade_dir == 1 ? "IN: LONG" : "IN: SHORT") : "FLAT", text_color=TW, bgcolor=C_HDR, text_size=size.small)
+    table.cell(tbl, 2, 12, is_high_conf ? "🔥 HC" : "—", text_color=color.new(color.yellow, 0), bgcolor=C_HDR, text_size=size.small)
+    table.cell(tbl, 3, 12, o_txt, text_color=o_tc, bgcolor=o_col, text_size=size.normal)
+
+// ═══════════════════════════════════════════════════════════════════
+// VOLUME SNAPSHOT TABLE  (6 columns)
+// ═══════════════════════════════════════════════════════════════════
+var snap_tbl = table.new(position.bottom_right, 6, 12,
+     border_width=1, border_color=color.new(color.gray, 40),
+     frame_width=2,  frame_color=color.new(color.yellow, 30),
+     bgcolor=color.new(#0d1b2a, 0))
+
+if barstate.islast
+
+    C_HDR2  = color.new(#1a1a2e, 0)
+    C_ROW2  = color.new(#0f2034, 0)
+    C_SIG_B = color.new(color.lime,   20)
+    C_SIG_S = color.new(color.red,    20)
+    C_NEUT2 = color.new(color.gray,   40)
+    TW2     = color.white
+    TB2     = color.black
+
+    sig_col  = snap_dir == 1 ? C_SIG_B : snap_dir == -1 ? C_SIG_S : C_NEUT2
+    sig_tc   = snap_dir == 0 ? TW2 : TB2
+    bars_ago = snap_dir != 0 ? str.tostring(bar_index - snap_bar_idx) + "b ago" : "—"
+    lbk_hdr  = "−" + str.tostring(snap_lookback) + "b"
+
+    table.cell(snap_tbl, 0, 0, "📊 VOL SNAPSHOT",
+         text_color=color.new(color.yellow, 0), bgcolor=C_HDR2, text_size=size.small, text_halign=text.align_left)
+    table.cell(snap_tbl, 1, 0, "",             text_color=TW2,   bgcolor=C_HDR2, text_size=size.small)
+    table.cell(snap_tbl, 2, 0, "",             text_color=TW2,   bgcolor=C_HDR2, text_size=size.small)
+    table.cell(snap_tbl, 3, 0, snap_dir != 0 ? snap_dir_label : "NO SIGNAL",
+         text_color=sig_tc, bgcolor=sig_col, text_size=size.small)
+    table.cell(snap_tbl, 4, 0, "",             text_color=TW2,   bgcolor=C_HDR2, text_size=size.small)
+    table.cell(snap_tbl, 5, 0, bars_ago,       text_color=TW2,   bgcolor=C_HDR2, text_size=size.tiny)
+
+    table.cell(snap_tbl, 0, 1, snap_index + " | ATM " + str.tostring(snap_atm),
+         text_color=color.new(color.silver,0), bgcolor=C_ROW2, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(snap_tbl, 1, 1, "",             text_color=color.new(color.silver,0), bgcolor=C_ROW2, text_size=size.tiny)
+    table.cell(snap_tbl, 2, 1, "Exp: " + snap_expiry, text_color=color.new(color.silver,0), bgcolor=C_ROW2, text_size=size.tiny)
+    table.cell(snap_tbl, 3, 1, "6 strikes/side", text_color=color.new(color.silver,0), bgcolor=C_ROW2, text_size=size.tiny)
+    table.cell(snap_tbl, 4, 1, "",             text_color=color.new(color.silver,0), bgcolor=C_ROW2, text_size=size.tiny)
+    table.cell(snap_tbl, 5, 1, "lb=" + str.tostring(snap_lookback) + "b",
+         text_color=color.new(color.silver,0), bgcolor=C_ROW2, text_size=size.tiny)
+
+    table.cell(snap_tbl, 0, 2, "METRIC",    text_color=TW2,                            bgcolor=C_HDR2, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(snap_tbl, 1, 2, "SIDE",      text_color=TW2,                            bgcolor=C_HDR2, text_size=size.tiny)
+    table.cell(snap_tbl, 2, 2, lbk_hdr,    text_color=color.new(color.silver,  0),    bgcolor=C_HDR2, text_size=size.tiny)
+    table.cell(snap_tbl, 3, 2, "@ SIG",    text_color=color.new(color.yellow,  0),    bgcolor=C_HDR2, text_size=size.tiny)
+    table.cell(snap_tbl, 4, 2, "Δ sig−pre",text_color=color.new(color.orange,  0),    bgcolor=C_HDR2, text_size=size.tiny)
+    table.cell(snap_tbl, 5, 2, "LIVE / %", text_color=color.new(color.aqua,    0),    bgcolor=C_HDR2, text_size=size.tiny)
+
+    if snap_show_cdv
+        table.cell(snap_tbl, 0, 3, "CDV", text_color=TW2, bgcolor=C_ROW2, text_size=size.small, text_halign=text.align_left)
+        table.cell(snap_tbl, 1, 3, "CE",  text_color=color.new(color.lime, 0), bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 2, 3, snap_dir != 0 ? f_km(snap_cdv_ce_prev) : "—", text_color=f_val_color(snap_cdv_ce_prev), bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 3, 3, snap_dir != 0 ? f_km(snap_cdv_ce_now)  : "—", text_color=f_val_color(snap_cdv_ce_now),  bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 4, 3, snap_dir != 0 ? f_delta_str(snap_cdv_ce_now - snap_cdv_ce_prev) + " (" + f_pct_str(sig_cdv_ce_pct) + ")" : "—",
+             text_color=hc_cdv_ce ? color.new(color.black, 0) : f_val_color(sig_cdv_ce_pct),
+             bgcolor=hc_cdv_ce ? color.new(color.yellow, 10) : C_ROW2, text_size=size.tiny)
+        table.cell(snap_tbl, 5, 3, snap_dir != 0 ? f_km(cdv_ce) + "  " + f_pct_str(cdv_ce_pct) : "—", text_color=f_val_color(cdv_ce_pct), bgcolor=C_ROW2, text_size=size.tiny)
+
+        table.cell(snap_tbl, 0, 4, "",    text_color=TW2, bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 1, 4, "PE",  text_color=color.new(color.red, 0), bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 2, 4, snap_dir != 0 ? f_km(snap_cdv_pe_prev) : "—", text_color=f_val_color(snap_cdv_pe_prev), bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 3, 4, snap_dir != 0 ? f_km(snap_cdv_pe_now)  : "—", text_color=f_val_color(snap_cdv_pe_now),  bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 4, 4, snap_dir != 0 ? f_delta_str(snap_cdv_pe_now - snap_cdv_pe_prev) + " (" + f_pct_str(sig_cdv_pe_pct) + ")" : "—",
+             text_color=hc_cdv_pe ? color.new(color.black, 0) : f_val_color(sig_cdv_pe_pct),
+             bgcolor=hc_cdv_pe ? color.new(color.yellow, 10) : C_ROW2, text_size=size.tiny)
+        table.cell(snap_tbl, 5, 4, snap_dir != 0 ? f_km(cdv_pe) + "  " + f_pct_str(cdv_pe_pct) : "—", text_color=f_val_color(cdv_pe_pct), bgcolor=C_ROW2, text_size=size.tiny)
+
+    if snap_show_obv
+        table.cell(snap_tbl, 0, 5, "OBV", text_color=TW2, bgcolor=C_ROW2, text_size=size.small, text_halign=text.align_left)
+        table.cell(snap_tbl, 1, 5, "CE",  text_color=color.new(color.lime, 0), bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 2, 5, snap_dir != 0 ? f_km(snap_obv_ce_prev) : "—", text_color=f_val_color(snap_obv_ce_prev), bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 3, 5, snap_dir != 0 ? f_km(snap_obv_ce_now)  : "—", text_color=f_val_color(snap_obv_ce_now),  bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 4, 5, snap_dir != 0 ? f_delta_str(snap_obv_ce_now - snap_obv_ce_prev) + " (" + f_pct_str(sig_obv_ce_pct) + ")" : "—",
+             text_color=hc_obv_ce ? color.new(color.black, 0) : f_val_color(sig_obv_ce_pct),
+             bgcolor=hc_obv_ce ? color.new(color.yellow, 10) : C_ROW2, text_size=size.tiny)
+        table.cell(snap_tbl, 5, 5, snap_dir != 0 ? f_km(obv_ce) + "  " + f_pct_str(obv_ce_pct) : "—", text_color=f_val_color(obv_ce_pct), bgcolor=C_ROW2, text_size=size.tiny)
+
+        table.cell(snap_tbl, 0, 6, "",    text_color=TW2, bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 1, 6, "PE",  text_color=color.new(color.red, 0), bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 2, 6, snap_dir != 0 ? f_km(snap_obv_pe_prev) : "—", text_color=f_val_color(snap_obv_pe_prev), bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 3, 6, snap_dir != 0 ? f_km(snap_obv_pe_now)  : "—", text_color=f_val_color(snap_obv_pe_now),  bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 4, 6, snap_dir != 0 ? f_delta_str(snap_obv_pe_now - snap_obv_pe_prev) + " (" + f_pct_str(sig_obv_pe_pct) + ")" : "—",
+             text_color=hc_obv_pe ? color.new(color.black, 0) : f_val_color(sig_obv_pe_pct),
+             bgcolor=hc_obv_pe ? color.new(color.yellow, 10) : C_ROW2, text_size=size.tiny)
+        table.cell(snap_tbl, 5, 6, snap_dir != 0 ? f_km(obv_pe) + "  " + f_pct_str(obv_pe_pct) : "—", text_color=f_val_color(obv_pe_pct), bgcolor=C_ROW2, text_size=size.tiny)
+
+    if snap_show_nv
+        table.cell(snap_tbl, 0, 7, "NET VOL", text_color=TW2, bgcolor=C_ROW2, text_size=size.small, text_halign=text.align_left)
+        table.cell(snap_tbl, 1, 7, "CE",       text_color=color.new(color.lime, 0), bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 2, 7, snap_dir != 0 ? f_km(snap_nv_ce_prev) : "—", text_color=f_val_color(snap_nv_ce_prev), bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 3, 7, snap_dir != 0 ? f_km(snap_nv_ce_now)  : "—", text_color=f_val_color(snap_nv_ce_now),  bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 4, 7, snap_dir != 0 ? f_delta_str(snap_nv_ce_now - snap_nv_ce_prev) + " (" + f_pct_str(sig_nv_ce_pct) + ")" : "—",
+             text_color=hc_nv_ce ? color.new(color.black, 0) : f_val_color(sig_nv_ce_pct),
+             bgcolor=hc_nv_ce ? color.new(color.yellow, 10) : C_ROW2, text_size=size.tiny)
+        table.cell(snap_tbl, 5, 7, snap_dir != 0 ? f_km(nv_ce) + "  " + f_pct_str(nv_ce_pct) : "—", text_color=f_val_color(nv_ce_pct), bgcolor=C_ROW2, text_size=size.tiny)
+
+        table.cell(snap_tbl, 0, 8, "",    text_color=TW2, bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 1, 8, "PE",  text_color=color.new(color.red, 0), bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 2, 8, snap_dir != 0 ? f_km(snap_nv_pe_prev) : "—", text_color=f_val_color(snap_nv_pe_prev), bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 3, 8, snap_dir != 0 ? f_km(snap_nv_pe_now)  : "—", text_color=f_val_color(snap_nv_pe_now),  bgcolor=C_ROW2, text_size=size.small)
+        table.cell(snap_tbl, 4, 8, snap_dir != 0 ? f_delta_str(snap_nv_pe_now - snap_nv_pe_prev) + " (" + f_pct_str(sig_nv_pe_pct) + ")" : "—",
+             text_color=hc_nv_pe ? color.new(color.black, 0) : f_val_color(sig_nv_pe_pct),
+             bgcolor=hc_nv_pe ? color.new(color.yellow, 10) : C_ROW2, text_size=size.tiny)
+        table.cell(snap_tbl, 5, 8, snap_dir != 0 ? f_km(nv_pe) + "  " + f_pct_str(nv_pe_pct) : "—", text_color=f_val_color(nv_pe_pct), bgcolor=C_ROW2, text_size=size.tiny)
+
+    bull_hint        = snap_dir == 1
+    bear_hint        = snap_dir == -1
+    cdv_confirm_bull = bull_hint and cdv_ce_pct > 0 and cdv_pe_pct < 0
+    cdv_confirm_bear = bear_hint and cdv_pe_pct > 0 and cdv_ce_pct < 0
+    obv_confirm_bull = bull_hint and obv_ce_pct > 0 and obv_pe_pct < 0
+    obv_confirm_bear = bear_hint and obv_pe_pct > 0 and obv_ce_pct < 0
+    nv_confirm_bull  = bull_hint and nv_ce_pct  > 0 and nv_pe_pct  < 0
+    nv_confirm_bear  = bear_hint and nv_pe_pct  > 0 and nv_ce_pct  < 0
+
+    confirms  = (cdv_confirm_bull or cdv_confirm_bear ? 1 : 0) + (obv_confirm_bull or obv_confirm_bear ? 1 : 0) + (nv_confirm_bull or nv_confirm_bear ? 1 : 0)
+    conf_txt  = snap_dir == 0 ? "Awaiting signal" : confirms == 3 ? "ALL 3 confirm" : confirms == 2 ? "2/3 confirm" : confirms == 1 ? "1/3 confirm" : "Vol diverges"
+    conf_col  = snap_dir == 0 ? C_NEUT2 : confirms >= 2 ? color.new(color.lime, 20) : confirms == 1 ? color.new(color.orange, 20) : color.new(color.red, 20)
+
+    table.cell(snap_tbl, 0, 9, "CONFIRMATION", text_color=TW2, bgcolor=C_HDR2, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(snap_tbl, 1, 9, "",             text_color=TW2, bgcolor=C_HDR2, text_size=size.tiny)
+    table.cell(snap_tbl, 2, 9, "",             text_color=TB2, bgcolor=conf_col, text_size=size.tiny)
+    table.cell(snap_tbl, 3, 9, conf_txt,       text_color=TB2, bgcolor=conf_col, text_size=size.tiny)
+    table.cell(snap_tbl, 4, 9, "",             text_color=TB2, bgcolor=conf_col, text_size=size.tiny)
+    table.cell(snap_tbl, 5, 9, "",             text_color=TB2, bgcolor=conf_col, text_size=size.tiny)
+
+    hc_who  = (hc_cdv_ce ? "CDV-CE " : "") + (hc_cdv_pe ? "CDV-PE " : "") +
+              (hc_obv_ce ? "OBV-CE " : "") + (hc_obv_pe ? "OBV-PE " : "") +
+              (hc_nv_ce  ? "NV-CE "  : "") + (hc_nv_pe  ? "NV-PE"   : "")
+    hc_trig = str.length(str.trim(hc_who)) > 0 ? str.trim(hc_who) : "—"
+    hc_col  = is_high_conf ? color.new(color.yellow, 0) : color.new(color.gray, 50)
+    hc_bg   = is_high_conf ? color.new(#2b1d00, 0) : C_HDR2
+    hc_stat = is_high_conf ? "🔥 HIGH CONF" : "normal"
+    hpo_sfx = high_prob_only ? " [FILTER ON]" : ""
+    table.cell(snap_tbl, 0, 10, "HIGH CONF ≥" + str.tostring(int(hc_pct_thresh)) + "% Δ" + hpo_sfx,
+         text_color=hc_col, bgcolor=hc_bg, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(snap_tbl, 1, 10, "",      text_color=hc_col, bgcolor=hc_bg, text_size=size.tiny)
+    table.cell(snap_tbl, 2, 10, "",      text_color=hc_col, bgcolor=hc_bg, text_size=size.tiny)
+    table.cell(snap_tbl, 3, 10, hc_stat, text_color=hc_col, bgcolor=hc_bg, text_size=size.tiny)
+    table.cell(snap_tbl, 4, 10, hc_trig, text_color=hc_col, bgcolor=hc_bg, text_size=size.tiny)
+    table.cell(snap_tbl, 5, 10, "",      text_color=hc_col, bgcolor=hc_bg, text_size=size.tiny)
+
+    table.cell(snap_tbl, 0, 11, "Δ=sig−pre(frozen)  |  LIVE%=drift vs @sig(running)  |  🟡=HC triggered",
+         text_color=color.new(color.silver, 20), bgcolor=C_HDR2, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(snap_tbl, 1, 11, "", text_color=color.new(color.silver,20), bgcolor=C_HDR2, text_size=size.tiny)
+    table.cell(snap_tbl, 2, 11, "", text_color=color.new(color.silver,20), bgcolor=C_HDR2, text_size=size.tiny)
+    table.cell(snap_tbl, 3, 11, "", text_color=color.new(color.silver,20), bgcolor=C_HDR2, text_size=size.tiny)
+    table.cell(snap_tbl, 4, 11, "", text_color=color.new(color.silver,20), bgcolor=C_HDR2, text_size=size.tiny)
+    table.cell(snap_tbl, 5, 11, "", text_color=color.new(color.silver,20), bgcolor=C_HDR2, text_size=size.tiny)
+
+// ───────────────────────────────────────────────────────────────────
+// ALERTS — BUY / SELL + High Probability only
+// ───────────────────────────────────────────────────────────────────
+if bull_signal and hp_ok
+    re_tag = time_exit_bar ? " [⟳ RE-ENTRY]" : ""
+    hc_tag = is_high_conf  ? " 🔥HC" : ""
+    msg = "<b>BUY SIGNAL v3" + re_tag + hc_tag + "</b>\n<b>Symbol:</b> " + f_sym_lbl() + " | TF: " + timeframe.period + "\n<b>Price:</b> " + str.tostring(close, "#.##") + "  ADX: " + str.tostring(adx_val, "#.#") + "\n<b>DI+:</b> " + str.tostring(diplus, "#.##") + "  <b>DI-:</b> " + str.tostring(diminus, "#.##") + "\n<b>SL:</b> " + str.tostring(close - sl_pts, "#.##") + "  <b>TP:</b> " + str.tostring(close + tp_pts, "#.##")
+    alert(f_tg(msg), alert.freq_once_per_bar)
+
+if bear_signal and hp_ok
+    re_tag = time_exit_bar ? " [⟳ RE-ENTRY]" : ""
+    hc_tag = is_high_conf  ? " 🔥HC" : ""
+    msg = "<b>SELL SIGNAL v3" + re_tag + hc_tag + "</b>\n<b>Symbol:</b> " + f_sym_lbl() + " | TF: " + timeframe.period + "\n<b>Price:</b> " + str.tostring(close, "#.##") + "  ADX: " + str.tostring(adx_val, "#.#") + "\n<b>DI+:</b> " + str.tostring(diplus, "#.##") + "  <b>DI-:</b> " + str.tostring(diminus, "#.##") + "\n<b>SL:</b> " + str.tostring(close + sl_pts, "#.##") + "  <b>TP:</b> " + str.tostring(close - tp_pts, "#.##")
+    alert(f_tg(msg), alert.freq_once_per_bar)
+
+if bull_signal and is_high_conf
+    hc_who_bull = (hc_cdv_ce ? "CDV-CE " : "") + (hc_cdv_pe ? "CDV-PE " : "") + (hc_obv_ce ? "OBV-CE " : "") + (hc_obv_pe ? "OBV-PE " : "") + (hc_nv_ce ? "NV-CE " : "") + (hc_nv_pe ? "NV-PE" : "")
+    msg = "🔥 <b>HIGH PROBABILITY BUY</b> 🔥\n<b>Symbol:</b> " + f_sym_lbl() + " | TF: " + timeframe.period + "\n<b>Price:</b> " + str.tostring(close, "#.##") + "  ADX: " + str.tostring(adx_val, "#.#") + "\n<b>DI+:</b> " + str.tostring(diplus, "#.##") + "  <b>DI-:</b> " + str.tostring(diminus, "#.##") + "\n<b>Vol Confirmed by:</b> " + str.trim(hc_who_bull) + "\n<b>SL:</b> " + str.tostring(close - sl_pts, "#.##") + "  <b>TP:</b> " + str.tostring(close + tp_pts, "#.##")
+    alert(f_tg(msg), alert.freq_once_per_bar)
+
+if bear_signal and is_high_conf
+    hc_who_bear = (hc_cdv_ce ? "CDV-CE " : "") + (hc_cdv_pe ? "CDV-PE " : "") + (hc_obv_ce ? "OBV-CE " : "") + (hc_obv_pe ? "OBV-PE " : "") + (hc_nv_ce ? "NV-CE " : "") + (hc_nv_pe ? "NV-PE" : "")
+    msg = "🔥 <b>HIGH PROBABILITY SELL</b> 🔥\n<b>Symbol:</b> " + f_sym_lbl() + " | TF: " + timeframe.period + "\n<b>Price:</b> " + str.tostring(close, "#.##") + "  ADX: " + str.tostring(adx_val, "#.#") + "\n<b>DI+:</b> " + str.tostring(diplus, "#.##") + "  <b>DI-:</b> " + str.tostring(diminus, "#.##") + "\n<b>Vol Confirmed by:</b> " + str.trim(hc_who_bear) + "\n<b>SL:</b> " + str.tostring(close + sl_pts, "#.##") + "  <b>TP:</b> " + str.tostring(close - tp_pts, "#.##")
+    alert(f_tg(msg), alert.freq_once_per_bar)
