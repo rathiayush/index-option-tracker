@@ -12,11 +12,16 @@ rawChartUnit = input.string("K", "Raw Chart Unit", options=["K", "M"])
 showTable    = input.bool(true, "Show % Change Table")
 showDayChangeTable = input.bool(true, "Show Day vs Current Table")
 showResetDebug = input.bool(false, "Show Daily Reset Marker")
+lookbackBars = input.int(20, "Lookback Bars (Table)", minval=1)
+
+// ===== Table Font Size =====
+tableFontSizeInput = input.string("Small", "Table Font Size", options=["Tiny", "Small", "Normal", "Large", "Huge"])
+tableFontSize = tableFontSizeInput == "Tiny" ? size.tiny : tableFontSizeInput == "Normal" ? size.normal : tableFontSizeInput == "Large" ? size.large : tableFontSizeInput == "Huge" ? size.huge : size.small
 
 // ===== Delta-Weighting Toggle =====
 useDeltaWeighting = input.bool(true, "Use Delta Weighting (Volume × Delta)", tooltip="When ON, net volume is multiplied by option delta (0-1 for calls, -1-0 for puts)")
 
-// ===== Auto-fetch Underlying Price (for delta calculation) =====
+// ===== Auto-fetch Underlying Price =====
 f_underlying_sym(_name) =>
     switch _name
         "NIFTY"      => "NSE:NIFTY"
@@ -42,8 +47,6 @@ f_get_delta(_strike, _isCall, _spot) =>
     else
         -1 / (1 + math.exp(-1.7 * moneyness * 5))
 
-// Net Volume: volume * price change direction & magnitude
-// Positive = net buying pressure, Negative = net selling pressure
 f_netvol_standard() =>
     ta.cum(volume * ta.change(close))
 
@@ -53,10 +56,10 @@ f_netvol_with_delta(_delta) =>
 f_nv(_sym, _strike, _isCall, _spot) =>
     deltaWeight = useDeltaWeighting ? math.abs(f_get_delta(_strike, _isCall, _spot)) : 1.0
     request.security(_sym, timeframe.period, useDeltaWeighting ? f_netvol_with_delta(deltaWeight) : f_netvol_standard(), lookahead=barmerge.lookahead_off)
-// Get current spot for delta calculation
+
 currentSpot = underlyingPrice
 
-// ===== Strike Aggregation (Fixed 14 CE + 14 PE) =====
+// ===== Strike Levels =====
 ce_s7 = atmStrike - (7 * strikeStep)
 ce_s6 = atmStrike - (6 * strikeStep)
 ce_s5 = atmStrike - (5 * strikeStep)
@@ -119,7 +122,7 @@ peRawNv += nz(f_nv(f_sym(pe_p4, false), pe_p4, false, currentSpot))
 peRawNv += nz(f_nv(f_sym(pe_p5, false), pe_p5, false, currentSpot))
 peRawNv += nz(f_nv(f_sym(pe_p6, false), pe_p6, false, currentSpot))
 
-// ===== Day Opening Candle Baseline (FIXED) =====
+// ===== Day Opening Candle Baseline =====
 isNewDay = ta.change(time("D")) != 0
 
 var float ceBase          = na
@@ -143,11 +146,9 @@ if isNewDay
 
 if barstate.isconfirmed
     dayCandleNo += 1
-
     if dayCandleNo == 1
         ceBase := ceRawNv
         peBase := peRawNv
-
     if dayCandleNo == 2
         ceSecondBase := ceRawNv
         peSecondBase := peRawNv
@@ -157,12 +158,10 @@ plotshape(showResetDebug and resetNow, title="Daily Baseline Reset", style=shape
 // ===== Delta from Baselines =====
 ceDayDelta   = ceRawNv - nz(ceBase, ceRawNv)
 peDayDelta   = peRawNv - nz(peBase, peRawNv)
-
 ceFrom1stRaw = ceDayDelta
 peFrom1stRaw = peDayDelta
 ceDayRaw     = ceFrom1stRaw
 peDayRaw     = peFrom1stRaw
-
 ceFrom2ndRaw = not na(ceSecondBase) ? (ceRawNv - ceSecondBase) : na
 peFrom2ndRaw = not na(peSecondBase) ? (peRawNv - peSecondBase) : na
 
@@ -176,11 +175,10 @@ peRawEma = ta.ema(peFrom1stRaw, smoothLen)
 cePctEma = ta.ema(ceFrom1stPct, smoothLen)
 pePctEma = ta.ema(peFrom1stPct, smoothLen)
 
-useRaw     = displayMode == "Raw"
-ceActive   = useRaw ? ceRawEma : cePctEma
-peActive   = useRaw ? peRawEma : pePctEma
+useRaw   = displayMode == "Raw"
+ceActive = useRaw ? ceRawEma : cePctEma
+peActive = useRaw ? peRawEma : pePctEma
 
-// Capture previous day's closing chart value on the first bar of each new day
 if isNewDay
     cePrevDayClose := ceActive[1]
     pePrevDayClose := peActive[1]
@@ -192,10 +190,11 @@ peRawChart = peRawEma / rawDiv
 crossUp   = ta.crossover(ceActive, peActive)
 crossDown = ta.crossunder(ceActive, peActive)
 
-ceCrossText  = crossUp ? "Bull Cross" : crossDown ? "Bear Cross" : "-"
-peCrossText  = crossDown ? "Bull Cross" : crossUp ? "Bear Cross" : "-"
-ceCrossColor = ceCrossText == "Bull Cross" ? color.lime : ceCrossText == "Bear Cross" ? color.red : color.gray
-peCrossColor = peCrossText == "Bull Cross" ? color.lime : peCrossText == "Bear Cross" ? color.red : color.gray
+// ===== Lookback Bars Computation =====
+ceLookbackVal       = ceActive[lookbackBars]
+peLookbackVal       = peActive[lookbackBars]
+ceLookbackChangePct = not na(ceLookbackVal) and math.abs(ceLookbackVal) > 0 ? ((ceActive - ceLookbackVal) / math.abs(ceLookbackVal)) * 100 : na
+peLookbackChangePct = not na(peLookbackVal) and math.abs(peLookbackVal) > 0 ? ((peActive - peLookbackVal) / math.abs(peLookbackVal)) * 100 : na
 
 // ===== Alerts =====
 f_json(txt) =>
@@ -208,29 +207,19 @@ f_webhook_payload(_html_text) =>
 if barstate.isconfirmed and crossUp
     modeTxt  = useRaw ? "Raw" : "Percent"
     deltaTxt = useDeltaWeighting ? " (Delta-Weighted)" : ""
-    msg_html = "<b>NET VOL CE/PE CROSS ALERT</b>\n" +
-      "<b>" + indexName + "</b> | TF:" + timeframe.period + "\n" +
-      "<b>Mode:</b> " + modeTxt + deltaTxt + "\n" +
-      "<b>Event:</b> Green crossed Red (BULL)\n" +
-      "<b>CE:</b> " + str.tostring(ceActive, "#.00") + " | <b>PE:</b> " + str.tostring(peActive, "#.00")
+    msg_html = "<b>NET VOL CE/PE CROSS ALERT</b>\n" + "<b>" + indexName + "</b> | TF:" + timeframe.period + "\n" + "<b>Mode:</b> " + modeTxt + deltaTxt + "\n" + "<b>Event:</b> Green crossed Red (BULL)\n" + "<b>CE:</b> " + str.tostring(ceActive, "#.00") + " | <b>PE:</b> " + str.tostring(peActive, "#.00")
     alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
 
 if barstate.isconfirmed and crossDown
     modeTxt  = useRaw ? "Raw" : "Percent"
     deltaTxt = useDeltaWeighting ? " (Delta-Weighted)" : ""
-    msg_html = "<b>NET VOL CE/PE CROSS ALERT</b>\n" +
-      "<b>" + indexName + "</b> | TF:" + timeframe.period + "\n" +
-      "<b>Mode:</b> " + modeTxt + deltaTxt + "\n" +
-      "<b>Event:</b> Red crossed Green (BEAR)\n" +
-      "<b>CE:</b> " + str.tostring(ceActive, "#.00") + " | <b>PE:</b> " + str.tostring(peActive, "#.00")
+    msg_html = "<b>NET VOL CE/PE CROSS ALERT</b>\n" + "<b>" + indexName + "</b> | TF:" + timeframe.period + "\n" + "<b>Mode:</b> " + modeTxt + deltaTxt + "\n" + "<b>Event:</b> Red crossed Green (BEAR)\n" + "<b>CE:</b> " + str.tostring(ceActive, "#.00") + " | <b>PE:</b> " + str.tostring(peActive, "#.00")
     alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
 
 // ===== Plot =====
 plot(0, "Opening Candle Baseline", color=color.new(color.gray, 20), linewidth=1, style=plot.style_line)
 plot(useRaw ? ceRawChart : na, "CE Net Vol Raw", color=color.new(color.lime, 0), linewidth=2)
 plot(useRaw ? peRawChart : na, "PE Net Vol Raw", color=color.new(color.red, 0), linewidth=2)
-plot(not useRaw ? cePctEma : na, "CE Net Vol %",  color=color.new(color.lime, 0), linewidth=2)
-plot(not useRaw ? pePctEma : na, "PE Net Vol %",  color=color.new(color.red, 0), linewidth=2)
 
 // ===== Table =====
 f_pct_color(v) =>
@@ -243,33 +232,33 @@ f_fmt_km(v) =>
 var table t = table.new(position.top_right, 3, 10, border_width=1)
 
 if barstate.islast and showTable
-    table.cell(t, 0, 0, "Metric",  bgcolor=color.new(color.silver, 15), text_color=color.black)
-    table.cell(t, 1, 0, "CE",      bgcolor=color.new(color.silver, 15), text_color=color.black)
-    table.cell(t, 2, 0, "PE",      bgcolor=color.new(color.silver, 15), text_color=color.black)
+    table.cell(t, 0, 0, "Metric",  bgcolor=color.new(color.silver, 15), text_color=color.black, text_size=tableFontSize)
+    table.cell(t, 1, 0, "CE",      bgcolor=color.new(color.silver, 15), text_color=color.black, text_size=tableFontSize)
+    table.cell(t, 2, 0, "PE",      bgcolor=color.new(color.silver, 15), text_color=color.black, text_size=tableFontSize)
 
-    table.cell(t, 0, 1, "Delta Weighting", bgcolor=color.new(color.navy, 60), text_color=color.white)
-    table.cell(t, 1, 1, useDeltaWeighting ? "ON" : "OFF", bgcolor=color.new(color.navy, 70), text_color=useDeltaWeighting ? color.lime : color.red)
-    table.cell(t, 2, 1, "", bgcolor=color.new(color.navy, 70), text_color=color.white)
+    table.cell(t, 0, 1, "Delta Weighting", bgcolor=color.new(color.navy, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 1, 1, useDeltaWeighting ? "ON" : "OFF", bgcolor=color.new(color.navy, 70), text_color=useDeltaWeighting ? color.lime : color.red, text_size=tableFontSize)
+    table.cell(t, 2, 1, "", bgcolor=color.new(color.navy, 70), text_color=color.white, text_size=tableFontSize)
 
-    table.cell(t, 0, 2, "1st Candle Raw", bgcolor=color.new(color.gray, 85), text_color=color.white)
-    table.cell(t, 1, 2, f_fmt_km(ceBase),  bgcolor=color.new(color.gray, 90), text_color=color.white)
-    table.cell(t, 2, 2, f_fmt_km(peBase),  bgcolor=color.new(color.gray, 90), text_color=color.white)
+    table.cell(t, 0, 2, "1st Candle Raw", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 1, 2, f_fmt_km(ceBase),  bgcolor=color.new(color.gray, 90), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 2, 2, f_fmt_km(peBase),  bgcolor=color.new(color.gray, 90), text_color=color.white, text_size=tableFontSize)
 
-    table.cell(t, 0, 3, "2nd Candle Raw", bgcolor=color.new(color.gray, 85), text_color=color.white)
-    table.cell(t, 1, 3, na(ceSecondBase) ? "Waiting" : f_fmt_km(ceSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(ceSecondBase) ? color.orange : color.white)
-    table.cell(t, 2, 3, na(peSecondBase) ? "Waiting" : f_fmt_km(peSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(peSecondBase) ? color.orange : color.white)
+    table.cell(t, 0, 3, "2nd Candle Raw", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 1, 3, na(ceSecondBase) ? "Waiting" : f_fmt_km(ceSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(ceSecondBase) ? color.orange : color.white, text_size=tableFontSize)
+    table.cell(t, 2, 3, na(peSecondBase) ? "Waiting" : f_fmt_km(peSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(peSecondBase) ? color.orange : color.white, text_size=tableFontSize)
 
-    table.cell(t, 0, 4, "Current Raw", bgcolor=color.new(color.gray, 85), text_color=color.white)
-    table.cell(t, 1, 4, f_fmt_km(ceRawNv), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceDayRaw))
-    table.cell(t, 2, 4, f_fmt_km(peRawNv), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peDayRaw))
+    table.cell(t, 0, 4, "Current Raw", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 1, 4, f_fmt_km(ceRawNv), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceDayRaw), text_size=tableFontSize)
+    table.cell(t, 2, 4, f_fmt_km(peRawNv), bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peDayRaw), text_size=tableFontSize)
 
-    table.cell(t, 0, 5, "% from 1st Candle", bgcolor=color.new(color.gray, 85), text_color=color.white)
-    table.cell(t, 1, 5, str.tostring(ceFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom1stPct))
-    table.cell(t, 2, 5, str.tostring(peFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom1stPct))
+    table.cell(t, 0, 5, "% from 1st Candle", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 1, 5, str.tostring(ceFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom1stPct), text_size=tableFontSize)
+    table.cell(t, 2, 5, str.tostring(peFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom1stPct), text_size=tableFontSize)
 
-    table.cell(t, 0, 6, "% from 2nd Candle", bgcolor=color.new(color.gray, 85), text_color=color.white)
-    table.cell(t, 1, 6, na(ceFrom2ndPct) ? "-" : str.tostring(ceFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom2ndPct))
-    table.cell(t, 2, 6, na(peFrom2ndPct) ? "-" : str.tostring(peFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom2ndPct))
+    table.cell(t, 0, 6, "% from 2nd Candle", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 1, 6, na(ceFrom2ndPct) ? "-" : str.tostring(ceFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom2ndPct), text_size=tableFontSize)
+    table.cell(t, 2, 6, na(peFrom2ndPct) ? "-" : str.tostring(peFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom2ndPct), text_size=tableFontSize)
 
 // ===== Day vs Current Table =====
 unitLabel = rawChartUnit
@@ -281,28 +270,31 @@ f_fmt_chart(v) =>
 ceDayChangePct = not na(cePrevDayClose) and math.abs(cePrevDayClose) > 0 ? ((ceActive - cePrevDayClose) / math.abs(cePrevDayClose)) * 100 : na
 peDayChangePct = not na(pePrevDayClose) and math.abs(pePrevDayClose) > 0 ? ((peActive - pePrevDayClose) / math.abs(pePrevDayClose)) * 100 : na
 
-var table t2 = table.new(position.bottom_right, 3, 5, border_width=1)
+var table t2 = table.new(position.bottom_right, 3, 6, border_width=1)
 
 if barstate.islast and showDayChangeTable
-    table.cell(t2, 0, 0, "Net Vol: Day vs Current (" + modeLabel + ")", bgcolor=color.new(color.navy, 10), text_color=color.white, text_size=size.small)
-    table.cell(t2, 1, 0, "CE",                                           bgcolor=color.new(color.navy, 10), text_color=color.lime,  text_size=size.small)
-    table.cell(t2, 2, 0, "PE",                                           bgcolor=color.new(color.navy, 10), text_color=color.red,   text_size=size.small)
+    lbLabel = "±" + str.tostring(lookbackBars) + "B"
 
-    table.cell(t2, 0, 1, "Prev Day Close", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(t2, 1, 1, na(cePrevDayClose) ? "No Data" : f_fmt_chart(cePrevDayClose), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(cePrevDayClose), text_size=size.small)
-    table.cell(t2, 2, 1, na(pePrevDayClose) ? "No Data" : f_fmt_chart(pePrevDayClose), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(pePrevDayClose), text_size=size.small)
+    table.cell(t2, 0, 0, "Net Vol: Day vs Current (" + modeLabel + ")", bgcolor=color.new(color.navy, 10), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 0, "CE",                                           bgcolor=color.new(color.navy, 10), text_color=color.lime,  text_size=tableFontSize)
+    table.cell(t2, 2, 0, "PE",                                           bgcolor=color.new(color.navy, 10), text_color=color.red,   text_size=tableFontSize)
 
-    table.cell(t2, 0, 2, "Today (Live)", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(t2, 1, 2, f_fmt_chart(ceActive), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(ceActive), text_size=size.small)
-    table.cell(t2, 2, 2, f_fmt_chart(peActive), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(peActive), text_size=size.small)
+    table.cell(t2, 0, 1, "Prev Day Close", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 1, na(cePrevDayClose) ? "No Data" : f_fmt_chart(cePrevDayClose), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(cePrevDayClose), text_size=tableFontSize)
+    table.cell(t2, 2, 1, na(pePrevDayClose) ? "No Data" : f_fmt_chart(pePrevDayClose), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(pePrevDayClose), text_size=tableFontSize)
 
-    table.cell(t2, 0, 3, "% Change (Day)", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(t2, 1, 3, na(ceDayChangePct) ? "No Data" : str.tostring(ceDayChangePct, "#.00") + "%", bgcolor=color.new(color.gray, 85), text_color=f_pct_color(ceDayChangePct), text_size=size.small)
-    table.cell(t2, 2, 3, na(peDayChangePct) ? "No Data" : str.tostring(peDayChangePct, "#.00") + "%", bgcolor=color.new(color.gray, 85), text_color=f_pct_color(peDayChangePct), text_size=size.small)
+    table.cell(t2, 0, 2, "Today (Live)", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 2, f_fmt_chart(ceActive), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(ceActive), text_size=tableFontSize)
+    table.cell(t2, 2, 2, f_fmt_chart(peActive), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(peActive), text_size=tableFontSize)
 
-    netVol      = ceActive - peActive
-    netVolLabel = netVol > 0 ? "BULLISH" : netVol < 0 ? "BEARISH" : "NEUTRAL"
-    netVolColor = netVol > 0 ? color.lime  : netVol < 0 ? color.red  : color.gray
-    table.cell(t2, 0, 4, "Net Vol (CE-PE)", bgcolor=color.new(color.gray, 80), text_color=color.white,  text_size=size.small)
-    table.cell(t2, 1, 4, f_fmt_chart(netVol) + "  " + netVolLabel, bgcolor=color.new(color.gray, 85), text_color=netVolColor, text_size=size.small)
-    table.cell(t2, 2, 4, "", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(t2, 0, 3, "% Change (Day)", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 3, na(ceDayChangePct) ? "No Data" : str.tostring(ceDayChangePct, "#.00") + "%", bgcolor=color.new(color.gray, 85), text_color=f_pct_color(ceDayChangePct), text_size=tableFontSize)
+    table.cell(t2, 2, 3, na(peDayChangePct) ? "No Data" : str.tostring(peDayChangePct, "#.00") + "%", bgcolor=color.new(color.gray, 85), text_color=f_pct_color(peDayChangePct), text_size=tableFontSize)
+
+    table.cell(t2, 0, 4, lbLabel + " Ago (Val)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 4, na(ceLookbackVal) ? "No Data" : f_fmt_chart(ceLookbackVal), bgcolor=color.new(color.maroon, 70), text_color=f_pct_color(ceLookbackVal), text_size=tableFontSize)
+    table.cell(t2, 2, 4, na(peLookbackVal) ? "No Data" : f_fmt_chart(peLookbackVal), bgcolor=color.new(color.maroon, 70), text_color=f_pct_color(peLookbackVal), text_size=tableFontSize)
+
+    table.cell(t2, 0, 5, "Chg " + lbLabel + " (Live)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 5, na(ceLookbackChangePct) ? "No Data" : str.tostring(ceLookbackChangePct, "#.00") + "%", bgcolor=color.new(color.maroon, 70), text_color=f_pct_color(ceLookbackChangePct), text_size=tableFontSize)
+    table.cell(t2, 2, 5, na(peLookbackChangePct) ? "No Data" : str.tostring(peLookbackChangePct, "#.00") + "%", bgcolor=color.new(color.maroon, 70), text_color=f_pct_color(peLookbackChangePct), text_size=tableFontSize)
