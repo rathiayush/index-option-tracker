@@ -6,15 +6,24 @@ chartSym  = syminfo.ticker
 indexName = str.contains(chartSym, "BANKNIFTY") ? "BANKNIFTY" : str.contains(chartSym, "FINNIFTY") ? "FINNIFTY" : str.contains(chartSym, "MIDCPNIFTY") ? "MIDCPNIFTY" : str.contains(chartSym, "SENSEX") ? "BSX" : str.contains(chartSym, "BANKEX") ? "BANKEX" : str.contains(chartSym, "NIFTY") ? "NIFTY" : input.string("NIFTY", "Index Name (fallback)", options=["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"])
 
 // ===== Inputs =====
+// ===== Frozen Candle: Time-based (IST = Asia/Kolkata, 24-hour HHMM) =====
+frozenTimeInput = input.int(1342, "Frozen Candle Time IST (HHMM)", minval=0, maxval=2359, group="Base Settings", tooltip="Enter as HHMM. e.g. 1342 = 13:42 IST, 915 = 09:15 IST")
+frozenHour   = math.floor(frozenTimeInput / 100)
+frozenMinute = frozenTimeInput - frozenHour * 100
+
+// ===== Percentage Threshold (shared: Lookback + Frozen) =====
+pctThreshold = input.float(50.0, "Percentage Threshold (%)", minval=0.0, step=1.0, group="Base Settings", tooltip="If the % change over the Lookback Bars period (or vs the Frozen Bar) is >= this value, the bar/value is highlighted Yellow and an alert fires. Applies to CE and PE independently.")
+
 atmStrike          = input.int(24000, "ATM Strike", group="Base Settings")
 smoothLen          = input.int(9, "OBV EMA Length", minval=1, group="Base Settings")
 displayMode        = input.string("Raw", "Display Mode", options=["Raw", "Percent"], group="Base Settings")
 rawChartUnit       = input.string("K", "Raw Chart Unit", options=["K", "M"], group="Base Settings")
 showTable          = input.bool(true, "Show % Change Table", group="Base Settings")
 showDayChangeTable = input.bool(true, "Show Day vs Current Table", group="Base Settings")
-showResetDebug     = input.bool(false, "Show Daily Reset Marker", group="Base Settings")
-lookbackBars       = input.int(20, "Lookback Bars (Table)", minval=1, group="Base Settings")
-frozenCandleNo     = input.int(5, "Frozen Candle No. (Table)", minval=1, group="Base Settings")
+showResetDebug          = input.bool(false, "Show Daily Reset Marker",          group="Base Settings")
+showThresholdHighlight  = input.bool(false, "Show Threshold Highlight (Bar BG)", group="Base Settings")
+showThresholdArrows     = input.bool(false, "Show Threshold Arrows",              group="Base Settings")
+lookbackBars            = input.int(10, "Lookback Bars (Table)", minval=1,        group="Base Settings")
 
 // ===== Table Font Size =====
 tableFontSizeInput = input.string("Small", "Table Font Size", options=["Tiny", "Small", "Normal", "Large", "Huge"], group="Base Settings")
@@ -216,8 +225,15 @@ if barstate.isconfirmed
         ceSecondBase := ceRawObv
         peSecondBase := peRawObv
 
+// ===== Frozen Candle: IST Time-based Detection =====
+// Uses Asia/Kolkata (IST = UTC+5:30). Checks if target time falls within this bar's window.
+barOpenMs   = hour(time, "Asia/Kolkata") * 3600000 + minute(time, "Asia/Kolkata") * 60000
+targetMs    = frozenHour * 3600000 + frozenMinute * 60000
+tfMs        = timeframe.in_seconds() * 1000
+isFrozenTime = barOpenMs <= targetMs and targetMs < barOpenMs + tfMs
+
 plotshape(showResetDebug and resetNow, title="Daily Baseline Reset", style=shape.labeldown, location=location.top, color=color.yellow, textcolor=color.black, text="RESET", size=size.tiny)
-plotshape(barstate.isconfirmed and dayCandleNo == frozenCandleNo, title="Frozen Candle Marker", style=shape.labeldown, location=location.top, color=color.teal, textcolor=color.white, text="FC", size=size.normal)
+plotshape(barstate.isconfirmed and isFrozenTime, title="Frozen Candle Marker", style=shape.labeldown, location=location.top, color=color.teal, textcolor=color.white, text="FC", size=size.normal)
 
 // ===== Delta from Baselines =====
 ceDayRaw     = ceRawObv - nz(ceBase, ceRawObv)
@@ -241,8 +257,8 @@ useRaw   = displayMode == "Raw"
 ceActive = useRaw ? ceRawEma : cePctEma
 peActive = useRaw ? peRawEma : pePctEma
 
-// ===== Frozen Candle Capture (after ceActive is computed) =====
-if barstate.isconfirmed and dayCandleNo == frozenCandleNo
+// ===== Frozen Candle Capture (UTC time match, after ceActive is computed) =====
+if barstate.isconfirmed and isFrozenTime
     ceFrozenVal := ceActive
     peFrozenVal := peActive
 
@@ -267,6 +283,18 @@ peLookbackChangePct = not na(peLookbackVal) and math.abs(peLookbackVal) > 0 ? ((
 ceFrozenChangePct = not na(ceFrozenVal) and math.abs(ceFrozenVal) > 0 ? ((ceActive - ceFrozenVal) / math.abs(ceFrozenVal)) * 100 : na
 peFrozenChangePct = not na(peFrozenVal) and math.abs(peFrozenVal) > 0 ? ((peActive - peFrozenVal) / math.abs(peFrozenVal)) * 100 : na
 
+// ===== Percentage Threshold Detection (Lookback + Frozen, CE & PE independent) =====
+ceLbHit = not na(ceLookbackChangePct) and math.abs(ceLookbackChangePct) >= pctThreshold
+peLbHit = not na(peLookbackChangePct) and math.abs(peLookbackChangePct) >= pctThreshold
+ceFcHit = not na(ceFrozenChangePct) and math.abs(ceFrozenChangePct) >= pctThreshold
+peFcHit = not na(peFrozenChangePct) and math.abs(peFrozenChangePct) >= pctThreshold
+anyThresholdHit = ceLbHit or peLbHit or ceFcHit or peFcHit
+
+// Yellow bar highlight when any threshold condition is met
+bgcolor(showThresholdHighlight and anyThresholdHit ? color.new(color.yellow, 80) : na, title="Threshold Highlight")
+plotshape(showThresholdArrows and (ceLbHit or ceFcHit), title="CE Threshold Hit", style=shape.triangleup, location=location.top, color=color.yellow, size=size.tiny)
+plotshape(showThresholdArrows and (peLbHit or peFcHit), title="PE Threshold Hit", style=shape.triangledown, location=location.bottom, color=color.yellow, size=size.tiny)
+
 // ===== Alerts =====
 f_json(txt) =>
     str.replace_all(str.replace_all(txt, "\n", "\\n"), '"', '\\"')
@@ -284,6 +312,26 @@ if barstate.isconfirmed and crossDown
     modeTxt  = useRaw ? "Raw" : "Percent"
     deltaTxt = useDeltaWeighting ? " (Delta-Weighted)" : ""
     msg_html = "<b>OBV CE/PE CROSS ALERT</b>\n<b>" + indexName + "</b> | TF:" + timeframe.period + "\n<b>Mode:</b> " + modeTxt + deltaTxt + "\n<b>Event:</b> Red crossed Green (BEAR)\n<b>CE:</b> " + str.tostring(ceActive, "#.00") + " | <b>PE:</b> " + str.tostring(peActive, "#.00")
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+// ===== Percentage Threshold Alerts (fire on the bar the condition first becomes true) =====
+thLabel  = str.tostring(pctThreshold, "#.0") + "%"
+fcTimeTxt = str.tostring(frozenHour) + ":" + f_2d(frozenMinute) + " IST"
+
+if barstate.isconfirmed and ceLbHit and not ceLbHit[1]
+    msg_html = "<b>OBV THRESHOLD ALERT (CE)</b>\n<b>" + indexName + "</b> | TF:" + timeframe.period + "\n<b>Event:</b> CE changed " + str.tostring(ceLookbackChangePct, "#.00") + "% over last " + str.tostring(lookbackBars) + " bars (>= " + thLabel + ")\n<b>CE:</b> " + str.tostring(ceActive, "#.00")
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and peLbHit and not peLbHit[1]
+    msg_html = "<b>OBV THRESHOLD ALERT (PE)</b>\n<b>" + indexName + "</b> | TF:" + timeframe.period + "\n<b>Event:</b> PE changed " + str.tostring(peLookbackChangePct, "#.00") + "% over last " + str.tostring(lookbackBars) + " bars (>= " + thLabel + ")\n<b>PE:</b> " + str.tostring(peActive, "#.00")
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and ceFcHit and not ceFcHit[1]
+    msg_html = "<b>OBV FROZEN BAR THRESHOLD ALERT (CE)</b>\n<b>" + indexName + "</b> | TF:" + timeframe.period + "\n<b>Event:</b> CE changed " + str.tostring(ceFrozenChangePct, "#.00") + "% vs Frozen Bar (" + fcTimeTxt + ") (>= " + thLabel + ")\n<b>CE:</b> " + str.tostring(ceActive, "#.00")
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and peFcHit and not peFcHit[1]
+    msg_html = "<b>OBV FROZEN BAR THRESHOLD ALERT (PE)</b>\n<b>" + indexName + "</b> | TF:" + timeframe.period + "\n<b>Event:</b> PE changed " + str.tostring(peFrozenChangePct, "#.00") + "% vs Frozen Bar (" + fcTimeTxt + ") (>= " + thLabel + ")\n<b>PE:</b> " + str.tostring(peActive, "#.00")
     alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
 
 // ===== Plot =====
@@ -353,7 +401,7 @@ var table t2 = table.new(position.bottom_right, 3, 8, border_width=1)
 
 if barstate.islast and showDayChangeTable
     lbLabel = "±" + str.tostring(lookbackBars) + "B"
-    fcLabel = "FC" + str.tostring(frozenCandleNo)
+    fcLabel = "FC " + str.tostring(frozenHour) + ":" + f_2d(frozenMinute) + "IST"
 
     table.cell(t2, 0, 0, "OBV: Day vs Current (" + modeLabel + ")", bgcolor=color.new(color.navy, 10), text_color=color.white, text_size=tableFontSize)
     table.cell(t2, 1, 0, "CE",                                       bgcolor=color.new(color.navy, 10), text_color=color.lime,  text_size=tableFontSize)
@@ -372,17 +420,17 @@ if barstate.islast and showDayChangeTable
     table.cell(t2, 2, 3, na(peDayChangePct) ? "No Data" : str.tostring(peDayChangePct, "#.00") + "%", bgcolor=color.new(color.gray, 85), text_color=f_pct_color(peDayChangePct), text_size=tableFontSize)
 
     table.cell(t2, 0, 4, lbLabel + " Ago (Val)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
-    table.cell(t2, 1, 4, na(ceLookbackVal) ? "No Data" : f_fmt_chart(ceLookbackVal), bgcolor=color.new(color.maroon, 70), text_color=f_pct_color(ceLookbackVal), text_size=tableFontSize)
-    table.cell(t2, 2, 4, na(peLookbackVal) ? "No Data" : f_fmt_chart(peLookbackVal), bgcolor=color.new(color.maroon, 70), text_color=f_pct_color(peLookbackVal), text_size=tableFontSize)
+    table.cell(t2, 1, 4, na(ceLookbackVal) ? "No Data" : f_fmt_chart(ceLookbackVal), bgcolor=ceLbHit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=ceLbHit ? color.black : f_pct_color(ceLookbackVal), text_size=tableFontSize)
+    table.cell(t2, 2, 4, na(peLookbackVal) ? "No Data" : f_fmt_chart(peLookbackVal), bgcolor=peLbHit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=peLbHit ? color.black : f_pct_color(peLookbackVal), text_size=tableFontSize)
 
     table.cell(t2, 0, 5, "Chg " + lbLabel + " (Live)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
-    table.cell(t2, 1, 5, na(ceLookbackChangePct) ? "No Data" : str.tostring(ceLookbackChangePct, "#.00") + "%", bgcolor=color.new(color.maroon, 70), text_color=f_pct_color(ceLookbackChangePct), text_size=tableFontSize)
-    table.cell(t2, 2, 5, na(peLookbackChangePct) ? "No Data" : str.tostring(peLookbackChangePct, "#.00") + "%", bgcolor=color.new(color.maroon, 70), text_color=f_pct_color(peLookbackChangePct), text_size=tableFontSize)
+    table.cell(t2, 1, 5, na(ceLookbackChangePct) ? "No Data" : str.tostring(ceLookbackChangePct, "#.00") + "%", bgcolor=ceLbHit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=ceLbHit ? color.black : f_pct_color(ceLookbackChangePct), text_size=tableFontSize)
+    table.cell(t2, 2, 5, na(peLookbackChangePct) ? "No Data" : str.tostring(peLookbackChangePct, "#.00") + "%", bgcolor=peLbHit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=peLbHit ? color.black : f_pct_color(peLookbackChangePct), text_size=tableFontSize)
 
     table.cell(t2, 0, 6, fcLabel + " Val", bgcolor=color.new(color.teal, 50), text_color=color.white, text_size=tableFontSize)
-    table.cell(t2, 1, 6, na(ceFrozenVal) ? "Waiting" : f_fmt_chart(ceFrozenVal), bgcolor=color.new(color.teal, 60), text_color=na(ceFrozenVal) ? color.orange : f_pct_color(ceFrozenVal), text_size=tableFontSize)
-    table.cell(t2, 2, 6, na(peFrozenVal) ? "Waiting" : f_fmt_chart(peFrozenVal), bgcolor=color.new(color.teal, 60), text_color=na(peFrozenVal) ? color.orange : f_pct_color(peFrozenVal), text_size=tableFontSize)
+    table.cell(t2, 1, 6, na(ceFrozenVal) ? "Waiting" : f_fmt_chart(ceFrozenVal), bgcolor=ceFcHit ? color.new(color.yellow, 0) : color.new(color.teal, 60), text_color=ceFcHit ? color.black : na(ceFrozenVal) ? color.orange : f_pct_color(ceFrozenVal), text_size=tableFontSize)
+    table.cell(t2, 2, 6, na(peFrozenVal) ? "Waiting" : f_fmt_chart(peFrozenVal), bgcolor=peFcHit ? color.new(color.yellow, 0) : color.new(color.teal, 60), text_color=peFcHit ? color.black : na(peFrozenVal) ? color.orange : f_pct_color(peFrozenVal), text_size=tableFontSize)
 
-    table.cell(t2, 0, 7, "Chg " + fcLabel + " (Live)", bgcolor=color.new(color.teal, 50), text_color=color.white, text_size=tableFontSize)
-    table.cell(t2, 1, 7, na(ceFrozenChangePct) ? "Waiting" : str.tostring(ceFrozenChangePct, "#.00") + "%", bgcolor=color.new(color.teal, 60), text_color=na(ceFrozenChangePct) ? color.orange : f_pct_color(ceFrozenChangePct), text_size=tableFontSize)
-    table.cell(t2, 2, 7, na(peFrozenChangePct) ? "Waiting" : str.tostring(peFrozenChangePct, "#.00") + "%", bgcolor=color.new(color.teal, 60), text_color=na(peFrozenChangePct) ? color.orange : f_pct_color(peFrozenChangePct), text_size=tableFontSize)
+    table.cell(t2, 0, 7, "Chg " + fcLabel, bgcolor=color.new(color.teal, 50), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 7, na(ceFrozenChangePct) ? "Waiting" : str.tostring(ceFrozenChangePct, "#.00") + "%", bgcolor=ceFcHit ? color.new(color.yellow, 0) : color.new(color.teal, 60), text_color=ceFcHit ? color.black : na(ceFrozenChangePct) ? color.orange : f_pct_color(ceFrozenChangePct), text_size=tableFontSize)
+    table.cell(t2, 2, 7, na(peFrozenChangePct) ? "Waiting" : str.tostring(peFrozenChangePct, "#.00") + "%", bgcolor=peFcHit ? color.new(color.yellow, 0) : color.new(color.teal, 60), text_color=peFcHit ? color.black : na(peFrozenChangePct) ? color.orange : f_pct_color(peFrozenChangePct), text_size=tableFontSize)
