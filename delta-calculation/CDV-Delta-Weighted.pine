@@ -168,6 +168,7 @@ f_cdv(_sym, _strike, _isCall, _spot) =>
 currentSpot = underlyingPrice
 
 // ===== Strike Levels =====
+ce_s8 = atmStrike - 8 * strikeStep
 ce_s7 = atmStrike - 7 * strikeStep
 ce_s6 = atmStrike - 6 * strikeStep
 ce_s5 = atmStrike - 5 * strikeStep
@@ -182,7 +183,9 @@ ce_p3 = atmStrike + 3 * strikeStep
 ce_p4 = atmStrike + 4 * strikeStep
 ce_p5 = atmStrike + 5 * strikeStep
 ce_p6 = atmStrike + 6 * strikeStep
+ce_p7 = atmStrike + 7 * strikeStep
 
+pe_s8 = atmStrike - 8 * strikeStep
 pe_s7 = atmStrike - 7 * strikeStep
 pe_s6 = atmStrike - 6 * strikeStep
 pe_s5 = atmStrike - 5 * strikeStep
@@ -197,11 +200,12 @@ pe_p3 = atmStrike + 3 * strikeStep
 pe_p4 = atmStrike + 4 * strikeStep
 pe_p5 = atmStrike + 5 * strikeStep
 pe_p6 = atmStrike + 6 * strikeStep
+pe_p7 = atmStrike + 7 * strikeStep
 
 // ===== CDV Aggregation =====
-ceRawCdv = nz(f_cdv(f_sym(ce_s7, true), ce_s7, true, currentSpot)) + nz(f_cdv(f_sym(ce_s6, true), ce_s6, true, currentSpot)) + nz(f_cdv(f_sym(ce_s5, true), ce_s5, true, currentSpot)) + nz(f_cdv(f_sym(ce_s4, true), ce_s4, true, currentSpot)) + nz(f_cdv(f_sym(ce_s3, true), ce_s3, true, currentSpot)) + nz(f_cdv(f_sym(ce_s2, true), ce_s2, true, currentSpot)) + nz(f_cdv(f_sym(ce_s1, true), ce_s1, true, currentSpot)) + nz(f_cdv(f_sym(ce_s0, true), ce_s0, true, currentSpot)) + nz(f_cdv(f_sym(ce_p1, true), ce_p1, true, currentSpot)) + nz(f_cdv(f_sym(ce_p2, true), ce_p2, true, currentSpot)) + nz(f_cdv(f_sym(ce_p3, true), ce_p3, true, currentSpot)) + nz(f_cdv(f_sym(ce_p4, true), ce_p4, true, currentSpot)) + nz(f_cdv(f_sym(ce_p5, true), ce_p5, true, currentSpot)) + nz(f_cdv(f_sym(ce_p6, true), ce_p6, true, currentSpot))
+ceRawCdv = nz(f_cdv(f_sym(ce_s8, true), ce_s8, true, currentSpot)) + nz(f_cdv(f_sym(ce_s7, true), ce_s7, true, currentSpot)) + nz(f_cdv(f_sym(ce_s6, true), ce_s6, true, currentSpot)) + nz(f_cdv(f_sym(ce_s5, true), ce_s5, true, currentSpot)) + nz(f_cdv(f_sym(ce_s4, true), ce_s4, true, currentSpot)) + nz(f_cdv(f_sym(ce_s3, true), ce_s3, true, currentSpot)) + nz(f_cdv(f_sym(ce_s2, true), ce_s2, true, currentSpot)) + nz(f_cdv(f_sym(ce_s1, true), ce_s1, true, currentSpot)) + nz(f_cdv(f_sym(ce_s0, true), ce_s0, true, currentSpot)) + nz(f_cdv(f_sym(ce_p1, true), ce_p1, true, currentSpot)) + nz(f_cdv(f_sym(ce_p2, true), ce_p2, true, currentSpot)) + nz(f_cdv(f_sym(ce_p3, true), ce_p3, true, currentSpot)) + nz(f_cdv(f_sym(ce_p4, true), ce_p4, true, currentSpot)) + nz(f_cdv(f_sym(ce_p5, true), ce_p5, true, currentSpot)) + nz(f_cdv(f_sym(ce_p6, true), ce_p6, true, currentSpot)) + nz(f_cdv(f_sym(ce_p7, true), ce_p7, true, currentSpot))
 
-peRawCdv = nz(f_cdv(f_sym(pe_s7, false), pe_s7, false, currentSpot)) + nz(f_cdv(f_sym(pe_s6, false), pe_s6, false, currentSpot)) + nz(f_cdv(f_sym(pe_s5, false), pe_s5, false, currentSpot)) + nz(f_cdv(f_sym(pe_s4, false), pe_s4, false, currentSpot)) + nz(f_cdv(f_sym(pe_s3, false), pe_s3, false, currentSpot)) + nz(f_cdv(f_sym(pe_s2, false), pe_s2, false, currentSpot)) + nz(f_cdv(f_sym(pe_s1, false), pe_s1, false, currentSpot)) + nz(f_cdv(f_sym(pe_s0, false), pe_s0, false, currentSpot)) + nz(f_cdv(f_sym(pe_p1, false), pe_p1, false, currentSpot)) + nz(f_cdv(f_sym(pe_p2, false), pe_p2, false, currentSpot)) + nz(f_cdv(f_sym(pe_p3, false), pe_p3, false, currentSpot)) + nz(f_cdv(f_sym(pe_p4, false), pe_p4, false, currentSpot)) + nz(f_cdv(f_sym(pe_p5, false), pe_p5, false, currentSpot)) + nz(f_cdv(f_sym(pe_p6, false), pe_p6, false, currentSpot))
+peRawCdv = nz(f_cdv(f_sym(pe_s8, false), pe_s8, false, currentSpot)) + nz(f_cdv(f_sym(pe_s7, false), pe_s7, false, currentSpot)) + nz(f_cdv(f_sym(pe_s6, false), pe_s6, false, currentSpot)) + nz(f_cdv(f_sym(pe_s5, false), pe_s5, false, currentSpot)) + nz(f_cdv(f_sym(pe_s4, false), pe_s4, false, currentSpot)) + nz(f_cdv(f_sym(pe_s3, false), pe_s3, false, currentSpot)) + nz(f_cdv(f_sym(pe_s2, false), pe_s2, false, currentSpot)) + nz(f_cdv(f_sym(pe_s1, false), pe_s1, false, currentSpot)) + nz(f_cdv(f_sym(pe_s0, false), pe_s0, false, currentSpot)) + nz(f_cdv(f_sym(pe_p1, false), pe_p1, false, currentSpot)) + nz(f_cdv(f_sym(pe_p2, false), pe_p2, false, currentSpot)) + nz(f_cdv(f_sym(pe_p3, false), pe_p3, false, currentSpot)) + nz(f_cdv(f_sym(pe_p4, false), pe_p4, false, currentSpot)) + nz(f_cdv(f_sym(pe_p5, false), pe_p5, false, currentSpot)) + nz(f_cdv(f_sym(pe_p6, false), pe_p6, false, currentSpot)) + nz(f_cdv(f_sym(pe_p7, false), pe_p7, false, currentSpot))
 
 // ===== Day Opening Candle Baseline =====
 isNewDay = ta.change(time("D")) != 0
