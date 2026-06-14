@@ -3,7 +3,7 @@ indicator("Net Volume CE/PE 14-Strike Baseline Graph with Delta Weighting", over
 
 // ===== Auto-detect Index from Chart Symbol =====
 chartSym  = syminfo.ticker
-indexName = str.contains(chartSym, "BANKNIFTY") ? "BANKNIFTY" : str.contains(chartSym, "FINNIFTY") ? "FINNIFTY" : str.contains(chartSym, "MIDCPNIFTY") ? "MIDCPNIFTY" : str.contains(chartSym, "SENSEX") ? "BSX" : str.contains(chartSym, "BANKEX") ? "BANKEX" : str.contains(chartSym, "NIFTY") ? "NIFTY" : input.string("NIFTY", "Index Name (fallback)", options=["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "BSX", "BANKEX"])
+indexName = str.contains(chartSym, "BANKNIFTY") ? "BANKNIFTY" : str.contains(chartSym, "FINNIFTY") ? "FINNIFTY" : str.contains(chartSym, "MIDCPNIFTY") ? "MIDCPNIFTY" : str.contains(chartSym, "SENSEX") ? "SENSEX" : str.contains(chartSym, "BSX") ? "SENSEX" : str.contains(chartSym, "BANKEX") ? "BANKEX" : str.contains(chartSym, "NIFTY") ? "NIFTY" : input.string("NIFTY", "Index Name (fallback)", options=["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"])
 
 // ===== Inputs =====
 // ===== Frozen Candle: Time-based (IST = Asia/Kolkata, 24-hour HHMM) =====
@@ -37,7 +37,7 @@ useManualExpiry = input.bool(false, "Use Manual Expiry Code", group="Expiry Over
 manualExpiry    = input.string("260528", "Manual Expiry Code (YYMMDD)", group="Expiry Override Settings", tooltip="Example: 260528 = May 28, 2026. Only active if 'Use Manual Expiry Code' is checked.")
 
 // ===== Auto Strike Step per Index =====
-strikeStep = indexName == "BANKNIFTY" ? 100 : indexName == "FINNIFTY" ? 50 : indexName == "MIDCPNIFTY" ? 25 : indexName == "BSX" ? 100 : indexName == "BANKEX" ? 100 : 50
+strikeStep = indexName == "BANKNIFTY" ? 100 : indexName == "FINNIFTY" ? 50 : indexName == "MIDCPNIFTY" ? 25 : indexName == "SENSEX" ? 100 : indexName == "BANKEX" ? 100 : 50
 
 // ===== Auto-fetch Underlying Price =====
 f_underlying_sym(_name) =>
@@ -46,7 +46,7 @@ f_underlying_sym(_name) =>
         "BANKNIFTY"  => "NSE:BANKNIFTY"
         "FINNIFTY"   => "NSE:FINNIFTY"
         "MIDCPNIFTY" => "NSE:MIDCPNIFTY"
-        "BSX"        => "BSE:SENSEX"
+        "SENSEX"     => "BSE:SENSEX"
         "BANKEX"     => "BSE:BANKEX"
         => "NSE:NIFTY"
 
@@ -127,12 +127,13 @@ f_next_tuesday_expiry() =>
     f_expiry_code(eYY, eMon, eDay)
 
 // ===== Route Expiry by Index =====
-autoExpiry = indexName == "BANKNIFTY" ? f_bnf_next_expiry() : indexName == "NIFTY" ? f_nifty_next_expiry() : indexName == "BSX" ? f_next_thursday_expiry() : indexName == "BANKEX" ? f_next_thursday_expiry() : f_next_tuesday_expiry()
+autoExpiry = indexName == "BANKNIFTY" ? f_bnf_next_expiry() : indexName == "NIFTY" ? f_nifty_next_expiry() : indexName == "SENSEX" ? f_next_thursday_expiry() : indexName == "BANKEX" ? f_next_thursday_expiry() : f_next_tuesday_expiry()
 expiryCode = useManualExpiry ? manualExpiry : autoExpiry
 
-// ===== Symbol Builder =====
+// ===== Symbol Builder (BSX prefix for SENSEX options) =====
 f_sym(_strike, _isCall) =>
-    str.upper(indexName) + expiryCode + (_isCall ? "C" : "P") + str.tostring(int(_strike))
+    prefix = indexName == "SENSEX" ? "BSX" : str.upper(indexName)
+    prefix + expiryCode + (_isCall ? "C" : "P") + str.tostring(int(_strike))
 
 // ===== Delta Calculation =====
 f_get_delta(_strike, _isCall, _spot) =>

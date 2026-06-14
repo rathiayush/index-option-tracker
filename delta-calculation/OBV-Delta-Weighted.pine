@@ -107,6 +107,7 @@ f_nifty_next_expiry() =>
     f_expiry_code(curYY, picked_mm, picked_dd)
 
 // ===== SENSEX / BANKEX: Weekly Thursday Expiry =====
+// ===== SENSEX / BANKEX: Weekly Thursday Expiry =====
 f_next_thursday_expiry() =>
     dow = dayofweek(timenow, "Asia/Kolkata")
     daysAhead = dow <= 5 ? 5 - dow : 7 - dow + 5
@@ -127,12 +128,13 @@ f_next_tuesday_expiry() =>
     f_expiry_code(eYY, eMon, eDay)
 
 // ===== Route Expiry by Index =====
-autoExpiry = indexName == "BANKNIFTY" ? f_bnf_next_expiry() : indexName == "NIFTY" ? f_nifty_next_expiry() : indexName == "SENSEX" ? f_next_thursday_expiry() : indexName == "BANKEX" ? f_next_thursday_expiry() : f_next_tuesday_expiry()
+autoExpiry = indexName == "BANKNIFTY" ? f_bnf_next_expiry() : indexName == "NIFTY" ? f_nifty_next_expiry() : indexName == "BSX" ? f_next_thursday_expiry() : indexName == "BANKEX" ? f_next_thursday_expiry() : f_next_tuesday_expiry()
 expiryCode = useManualExpiry ? manualExpiry : autoExpiry
 
 // ===== Symbol Builder =====
 f_sym(_strike, _isCall) =>
-    str.upper(indexName) + expiryCode + (_isCall ? "C" : "P") + str.tostring(int(_strike))
+    prefix = indexName == "SENSEX" ? "BSX" : str.upper(indexName)
+    prefix + expiryCode + (_isCall ? "C" : "P") + str.tostring(int(_strike))
 
 // ===== Delta Calculation =====
 f_get_delta(_strike, _isCall, _spot) =>

@@ -3,7 +3,7 @@ indicator("delta auto with Delta-Weighted CDV", overlay=false, dynamic_requests=
 
 // ===== Auto-detect Index from Chart Symbol =====
 chartSym  = syminfo.ticker
-indexName = str.contains(chartSym, "BANKNIFTY") ? "BANKNIFTY" : str.contains(chartSym, "FINNIFTY") ? "FINNIFTY" : str.contains(chartSym, "MIDCPNIFTY") ? "MIDCPNIFTY" : str.contains(chartSym, "SENSEX") ? "SENSEX" : str.contains(chartSym, "BANKEX") ? "BANKEX" : str.contains(chartSym, "NIFTY") ? "NIFTY" : input.string("NIFTY", "Index Name (fallback)", options=["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"])
+indexName = str.contains(chartSym, "BANKNIFTY") ? "BANKNIFTY" : str.contains(chartSym, "FINNIFTY") ? "FINNIFTY" : str.contains(chartSym, "MIDCPNIFTY") ? "MIDCPNIFTY" : str.contains(chartSym, "SENSEX") ? "SENSEX" : str.contains(chartSym, "BSX") ? "SENSEX" : str.contains(chartSym, "BANKEX") ? "BANKEX" : str.contains(chartSym, "NIFTY") ? "NIFTY" : input.string("NIFTY", "Index Name (fallback)", options=["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"])
 
 // ===== Inputs =====
 // ===== Frozen Candle: Time-based (IST = Asia/Kolkata, 24-hour HHMM) =====
@@ -130,9 +130,10 @@ f_next_tuesday_expiry() =>
 autoExpiry = indexName == "BANKNIFTY" ? f_bnf_next_expiry() : indexName == "NIFTY" ? f_nifty_next_expiry() : indexName == "SENSEX" ? f_next_thursday_expiry() : indexName == "BANKEX" ? f_next_thursday_expiry() : f_next_tuesday_expiry()
 expiryCode = useManualExpiry ? manualExpiry : autoExpiry
 
-// ===== Symbol Builder =====
+// ===== Symbol Builder (BSX prefix for SENSEX options) =====
 f_sym(_strike, _isCall) =>
-    str.upper(indexName) + expiryCode + (_isCall ? "C" : "P") + str.tostring(int(_strike))
+    prefix = indexName == "SENSEX" ? "BSX" : str.upper(indexName)
+    prefix + expiryCode + (_isCall ? "C" : "P") + str.tostring(int(_strike))
 
 // ===== CDV Calculation =====
 f_get_delta(_strike, _isCall, _spot) =>
@@ -238,7 +239,6 @@ if barstate.isconfirmed
         peSecondBase := peRawCdv
 
 // ===== Frozen Candle: IST Time-based Detection =====
-// Uses Asia/Kolkata (IST = UTC+5:30). Checks if target time falls within this bar's window.
 barOpenMs   = hour(time, "Asia/Kolkata") * 3600000 + minute(time, "Asia/Kolkata") * 60000
 targetMs    = frozenHour * 3600000 + frozenMinute * 60000
 tfMs        = timeframe.in_seconds() * 1000
@@ -269,7 +269,7 @@ useRaw   = displayMode == "Raw"
 ceActive = useRaw ? ceRawEma : cePctEma
 peActive = useRaw ? peRawEma : pePctEma
 
-// ===== Frozen Candle Capture (IST time match, after ceActive is computed) =====
+// ===== Frozen Candle Capture =====
 if barstate.isconfirmed and isFrozenTime
     ceFrozenVal := ceActive
     peFrozenVal := peActive
@@ -295,16 +295,15 @@ peLookbackChangePct = not na(peLookbackVal) and math.abs(peLookbackVal) > 0 ? ((
 ceFrozenChangePct = not na(ceFrozenVal) and math.abs(ceFrozenVal) > 0 ? ((ceActive - ceFrozenVal) / math.abs(ceFrozenVal)) * 100 : na
 peFrozenChangePct = not na(peFrozenVal) and math.abs(peFrozenVal) > 0 ? ((peActive - peFrozenVal) / math.abs(peFrozenVal)) * 100 : na
 
-// ===== Percentage Threshold Detection (Lookback + Frozen, CE & PE independent) =====
+// ===== Percentage Threshold Detection =====
 ceLbHit = not na(ceLookbackChangePct) and math.abs(ceLookbackChangePct) >= pctThreshold
 peLbHit = not na(peLookbackChangePct) and math.abs(peLookbackChangePct) >= pctThreshold
 ceFcHit = not na(ceFrozenChangePct) and math.abs(ceFrozenChangePct) >= pctThreshold
 peFcHit = not na(peFrozenChangePct) and math.abs(peFrozenChangePct) >= pctThreshold
 anyThresholdHit = ceLbHit or peLbHit or ceFcHit or peFcHit
 
-// Yellow bar highlight when any threshold condition is met
 bgcolor(showThresholdHighlight and anyThresholdHit ? color.new(color.yellow, 80) : na, title="Threshold Highlight")
-plotshape(showThresholdArrows and (ceLbHit or ceFcHit), title="CE Threshold Hit", style=shape.triangleup, location=location.top, color=color.yellow, size=size.tiny)
+plotshape(showThresholdArrows and (ceLbHit or ceFcHit), title="CE Threshold Hit", style=shape.triangleup,   location=location.top,    color=color.yellow, size=size.tiny)
 plotshape(showThresholdArrows and (peLbHit or peFcHit), title="PE Threshold Hit", style=shape.triangledown, location=location.bottom, color=color.yellow, size=size.tiny)
 
 // ===== Alerts =====
@@ -326,8 +325,7 @@ if barstate.isconfirmed and crossDown
     msg_html = "<b>CDV CE/PE CROSS ALERT</b>\n<b>" + indexName + "</b> | TF:" + timeframe.period + "\n<b>Mode:</b> " + modeTxt + deltaTxt + "\n<b>Event:</b> Red crossed Green (BEAR)\n<b>CE:</b> " + str.tostring(ceActive, "#.00") + " | <b>PE:</b> " + str.tostring(peActive, "#.00")
     alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
 
-// ===== Percentage Threshold Alerts (fire on the bar the condition first becomes true) =====
-thLabel  = str.tostring(pctThreshold, "#.0") + "%"
+thLabel   = str.tostring(pctThreshold, "#.0") + "%"
 fcTimeTxt = str.tostring(frozenHour) + ":" + f_2d(frozenMinute) + " IST"
 
 if barstate.isconfirmed and ceLbHit and not ceLbHit[1]
@@ -349,7 +347,7 @@ if barstate.isconfirmed and peFcHit and not peFcHit[1]
 // ===== Plot =====
 plot(0, "Opening Candle Baseline", color=color.new(color.gray, 20), linewidth=1, style=plot.style_line)
 plot(useRaw ? ceRawChart : na, "CE CDV Raw", color=color.new(color.lime, 0), linewidth=2)
-plot(useRaw ? peRawChart : na, "PE CDV Raw", color=color.new(color.red, 0), linewidth=2)
+plot(useRaw ? peRawChart : na, "PE CDV Raw", color=color.new(color.red,  0), linewidth=2)
 
 // ===== Table =====
 f_pct_color(v) =>
@@ -366,35 +364,35 @@ if barstate.islast and showTable
     table.cell(t, 1, 0, "CE",                 bgcolor=color.new(color.silver, 15), text_color=color.black, text_size=tableFontSize)
     table.cell(t, 2, 0, "PE",                 bgcolor=color.new(color.silver, 15), text_color=color.black, text_size=tableFontSize)
 
-    table.cell(t, 0, 1, indexName + " Price", bgcolor=color.new(color.navy, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 0, 1, indexName + " Price", bgcolor=color.new(color.navy, 60), text_color=color.white,  text_size=tableFontSize)
     table.cell(t, 1, 1, str.tostring(underlyingPrice, "#.00"), bgcolor=color.new(color.navy, 70), text_color=color.yellow, text_size=tableFontSize)
     table.cell(t, 2, 1, "Chart: " + chartSym, bgcolor=color.new(color.navy, 70), text_color=color.silver, text_size=tableFontSize)
 
-    table.cell(t, 0, 2, "ATM | Expiry",       bgcolor=color.new(color.navy, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 0, 2, "ATM | Expiry",       bgcolor=color.new(color.navy, 60), text_color=color.white,  text_size=tableFontSize)
     table.cell(t, 1, 2, str.tostring(int(atmStrike)), bgcolor=color.new(color.navy, 70), text_color=color.yellow, text_size=tableFontSize)
     table.cell(t, 2, 2, expiryCode,           bgcolor=color.new(color.navy, 70), text_color=color.yellow, text_size=tableFontSize)
 
-    table.cell(t, 0, 3, "Delta Weighting",    bgcolor=color.new(color.navy, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 0, 3, "Delta Weighting",    bgcolor=color.new(color.navy, 60), text_color=color.white,  text_size=tableFontSize)
     table.cell(t, 1, 3, useDeltaWeighting ? "ON" : "OFF", bgcolor=color.new(color.navy, 70), text_color=useDeltaWeighting ? color.lime : color.red, text_size=tableFontSize)
-    table.cell(t, 2, 3, "",                   bgcolor=color.new(color.navy, 70), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 2, 3, "",                   bgcolor=color.new(color.navy, 70), text_color=color.white,  text_size=tableFontSize)
 
-    table.cell(t, 0, 4, "1st Candle Raw",     bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=tableFontSize)
-    table.cell(t, 1, 4, f_fmt_km(ceBase),     bgcolor=color.new(color.gray, 90), text_color=color.white, text_size=tableFontSize)
-    table.cell(t, 2, 4, f_fmt_km(peBase),     bgcolor=color.new(color.gray, 90), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 0, 4, "1st Candle Raw",     bgcolor=color.new(color.gray, 85), text_color=color.white,  text_size=tableFontSize)
+    table.cell(t, 1, 4, f_fmt_km(ceBase),     bgcolor=color.new(color.gray, 90), text_color=color.white,  text_size=tableFontSize)
+    table.cell(t, 2, 4, f_fmt_km(peBase),     bgcolor=color.new(color.gray, 90), text_color=color.white,  text_size=tableFontSize)
 
-    table.cell(t, 0, 5, "2nd Candle Raw",     bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 0, 5, "2nd Candle Raw",     bgcolor=color.new(color.gray, 85), text_color=color.white,  text_size=tableFontSize)
     table.cell(t, 1, 5, na(ceSecondBase) ? "Waiting" : f_fmt_km(ceSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(ceSecondBase) ? color.orange : color.white, text_size=tableFontSize)
     table.cell(t, 2, 5, na(peSecondBase) ? "Waiting" : f_fmt_km(peSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(peSecondBase) ? color.orange : color.white, text_size=tableFontSize)
 
-    table.cell(t, 0, 6, "Current Raw",        bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 0, 6, "Current Raw",        bgcolor=color.new(color.gray, 85), text_color=color.white,  text_size=tableFontSize)
     table.cell(t, 1, 6, f_fmt_km(ceRawCdv),   bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceDayRaw), text_size=tableFontSize)
     table.cell(t, 2, 6, f_fmt_km(peRawCdv),   bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peDayRaw), text_size=tableFontSize)
 
-    table.cell(t, 0, 7, "% from 1st Candle",  bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 0, 7, "% from 1st Candle",  bgcolor=color.new(color.gray, 85), text_color=color.white,  text_size=tableFontSize)
     table.cell(t, 1, 7, str.tostring(ceFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom1stPct), text_size=tableFontSize)
     table.cell(t, 2, 7, str.tostring(peFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom1stPct), text_size=tableFontSize)
 
-    table.cell(t, 0, 8, "% from 2nd Candle",  bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=tableFontSize)
+    table.cell(t, 0, 8, "% from 2nd Candle",  bgcolor=color.new(color.gray, 85), text_color=color.white,  text_size=tableFontSize)
     table.cell(t, 1, 8, na(ceFrom2ndPct) ? "-" : str.tostring(ceFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom2ndPct), text_size=tableFontSize)
     table.cell(t, 2, 8, na(peFrom2ndPct) ? "-" : str.tostring(peFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom2ndPct), text_size=tableFontSize)
 
@@ -408,7 +406,6 @@ f_fmt_chart(v) =>
 ceDayChangePct = not na(cePrevDayClose) and math.abs(cePrevDayClose) > 0 ? ((ceActive - cePrevDayClose) / math.abs(cePrevDayClose)) * 100 : na
 peDayChangePct = not na(pePrevDayClose) and math.abs(pePrevDayClose) > 0 ? ((peActive - pePrevDayClose) / math.abs(pePrevDayClose)) * 100 : na
 
-// t2: 8 rows
 var table t2 = table.new(position.bottom_right, 3, 8, border_width=1)
 
 if barstate.islast and showDayChangeTable
