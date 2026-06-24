@@ -460,7 +460,7 @@ ceDayChangePct = not na(cePrevDayClose) and math.abs(cePrevDayClose) > 0 ? ((ceA
 peDayChangePct = not na(pePrevDayClose) and math.abs(pePrevDayClose) > 0 ? ((peActive - pePrevDayClose) / math.abs(pePrevDayClose)) * 100 : na
 
 // t2: 8 rows
-var table t2 = table.new(position.bottom_right, 3, 8, border_width=1)
+var table t2 = table.new(position.bottom_right, 3, 8, border_color=color.new(color.navy, 0), border_width=2, frame_color=color.new(color.navy, 0), frame_width=2)
 
 if barstate.islast and showDayChangeTable
     lbLabel = "±" + str.tostring(lookbackBars) + "B"
@@ -483,20 +483,20 @@ if barstate.islast and showDayChangeTable
     table.cell(t2, 2, 3, na(peDayChangePct) ? "No Data" : str.tostring(peDayChangePct, "#.00") + "%", bgcolor=color.new(color.gray, 85), text_color=f_pct_color(peDayChangePct), text_size=tableFontSize)
 
     table.cell(t2, 0, 4, lbLabel + " Ago (Val)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
-    table.cell(t2, 1, 4, na(ceLookbackVal) ? "No Data" : f_fmt_chart(ceLookbackVal), bgcolor=ceLbHit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=ceLbHit ? color.black : f_pct_color(ceLookbackVal), text_size=tableFontSize)
-    table.cell(t2, 2, 4, na(peLookbackVal) ? "No Data" : f_fmt_chart(peLookbackVal), bgcolor=peLbHit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=peLbHit ? color.black : f_pct_color(peLookbackVal), text_size=tableFontSize)
+    table.cell(t2, 1, 4, na(ceLookbackVal) ? "No Data" : f_fmt_chart(ceLookbackVal), bgcolor=ceLbHit ? (ceLookbackChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 2, 4, na(peLookbackVal) ? "No Data" : f_fmt_chart(peLookbackVal), bgcolor=peLbHit ? (peLookbackChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=color.white, text_size=tableFontSize)
 
     table.cell(t2, 0, 5, "Chg " + lbLabel + " (Live)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
-    table.cell(t2, 1, 5, na(ceLookbackChangePct) ? "No Data" : str.tostring(ceLookbackChangePct, "#.00") + "%", bgcolor=ceLbHit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=ceLbHit ? color.black : f_pct_color(ceLookbackChangePct), text_size=tableFontSize)
-    table.cell(t2, 2, 5, na(peLookbackChangePct) ? "No Data" : str.tostring(peLookbackChangePct, "#.00") + "%", bgcolor=peLbHit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=peLbHit ? color.black : f_pct_color(peLookbackChangePct), text_size=tableFontSize)
+    table.cell(t2, 1, 5, na(ceLookbackChangePct) ? "No Data" : str.tostring(ceLookbackChangePct, "#.00") + "%", bgcolor=ceLbHit ? (ceLookbackChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=ceLbHit ? color.white : f_pct_color(ceLookbackChangePct), text_size=tableFontSize)
+    table.cell(t2, 2, 5, na(peLookbackChangePct) ? "No Data" : str.tostring(peLookbackChangePct, "#.00") + "%", bgcolor=peLbHit ? (peLookbackChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=peLbHit ? color.white : f_pct_color(peLookbackChangePct), text_size=tableFontSize)
 
     table.cell(t2, 0, 6, fcLabel + " Val", bgcolor=color.new(color.teal, 50), text_color=color.white, text_size=tableFontSize)
-    table.cell(t2, 1, 6, na(ceFrozenVal) ? "Waiting" : f_fmt_chart(ceFrozenVal), bgcolor=ceFcHit ? color.new(color.yellow, 0) : color.new(color.teal, 60), text_color=ceFcHit ? color.black : na(ceFrozenVal) ? color.orange : f_pct_color(ceFrozenVal), text_size=tableFontSize)
-    table.cell(t2, 2, 6, na(peFrozenVal) ? "Waiting" : f_fmt_chart(peFrozenVal), bgcolor=peFcHit ? color.new(color.yellow, 0) : color.new(color.teal, 60), text_color=peFcHit ? color.black : na(peFrozenVal) ? color.orange : f_pct_color(peFrozenVal), text_size=tableFontSize)
+    table.cell(t2, 1, 6, na(ceFrozenVal) ? "Waiting" : f_fmt_chart(ceFrozenVal), bgcolor=ceFcHit ? (ceFrozenChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.teal, 60), text_color=ceFcHit ? color.white : na(ceFrozenVal) ? color.orange : f_pct_color(ceFrozenVal), text_size=tableFontSize)
+    table.cell(t2, 2, 6, na(peFrozenVal) ? "Waiting" : f_fmt_chart(peFrozenVal), bgcolor=peFcHit ? (peFrozenChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.teal, 60), text_color=peFcHit ? color.white : na(peFrozenVal) ? color.orange : f_pct_color(peFrozenVal), text_size=tableFontSize)
 
     table.cell(t2, 0, 7, "Chg " + fcLabel + " (Live)", bgcolor=color.new(color.teal, 50), text_color=color.white, text_size=tableFontSize)
-    table.cell(t2, 1, 7, na(ceFrozenChangePct) ? "Waiting" : str.tostring(ceFrozenChangePct, "#.00") + "%", bgcolor=ceFcHit ? color.new(color.yellow, 0) : color.new(color.teal, 60), text_color=ceFcHit ? color.black : na(ceFrozenChangePct) ? color.orange : f_pct_color(ceFrozenChangePct), text_size=tableFontSize)
-    table.cell(t2, 2, 7, na(peFrozenChangePct) ? "Waiting" : str.tostring(peFrozenChangePct, "#.00") + "%", bgcolor=peFcHit ? color.new(color.yellow, 0) : color.new(color.teal, 60), text_color=peFcHit ? color.black : na(peFrozenChangePct) ? color.orange : f_pct_color(peFrozenChangePct), text_size=tableFontSize)
+    table.cell(t2, 1, 7, na(ceFrozenChangePct) ? "Waiting" : str.tostring(ceFrozenChangePct, "#.00") + "%", bgcolor=ceFcHit ? (ceFrozenChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.teal, 60), text_color=ceFcHit ? color.white : na(ceFrozenChangePct) ? color.orange : f_pct_color(ceFrozenChangePct), text_size=tableFontSize)
+    table.cell(t2, 2, 7, na(peFrozenChangePct) ? "Waiting" : str.tostring(peFrozenChangePct, "#.00") + "%", bgcolor=peFcHit ? (peFrozenChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.teal, 60), text_color=peFcHit ? color.white : na(peFrozenChangePct) ? color.orange : f_pct_color(peFrozenChangePct), text_size=tableFontSize)
 
 // ===== Multi-Lookback Horizontal Table =====
 ceLb1Val = ceActive[lb1Bars]
@@ -520,8 +520,8 @@ peLb2Hit = not na(peLb2Chg) and math.abs(peLb2Chg) >= lookbackPctThreshold
 ceLb3Hit = not na(ceLb3Chg) and math.abs(ceLb3Chg) >= lookbackPctThreshold
 peLb3Hit = not na(peLb3Chg) and math.abs(peLb3Chg) >= lookbackPctThreshold
 
-// t3: 3 cols (Label | CE | PE) x 8 rows — same vertical style as t2, placed bottom_left
-var table t3 = table.new(position.bottom_left, 3, 8, border_width=1)
+// t3: 3 cols (Label | CE | PE) x 5 rows — % change only, no val rows
+var table t3 = table.new(position.bottom_left, 3, 5, border_width=1)
 
 if barstate.islast and showLookbackTable
     lb1Lbl = "±" + str.tostring(lb1Bars) + "B"
@@ -538,32 +538,17 @@ if barstate.islast and showLookbackTable
     table.cell(t3, 1, 1, f_fmt_chart(ceActive), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(ceActive), text_size=tableFontSize)
     table.cell(t3, 2, 1, f_fmt_chart(peActive), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(peActive), text_size=tableFontSize)
 
-    // LB1 Val
-    table.cell(t3, 0, 2, lb1Lbl + " Ago (Val)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
-    table.cell(t3, 1, 2, na(ceLb1Val) ? "No Data" : f_fmt_chart(ceLb1Val), bgcolor=ceLb1Hit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=ceLb1Hit ? color.black : f_pct_color(ceLb1Val), text_size=tableFontSize)
-    table.cell(t3, 2, 2, na(peLb1Val) ? "No Data" : f_fmt_chart(peLb1Val), bgcolor=peLb1Hit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=peLb1Hit ? color.black : f_pct_color(peLb1Val), text_size=tableFontSize)
-
     // LB1 Chg
-    table.cell(t3, 0, 3, "Chg " + lb1Lbl + " (Live)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
-    table.cell(t3, 1, 3, na(ceLb1Chg) ? "No Data" : str.tostring(ceLb1Chg, "#.00") + "%", bgcolor=ceLb1Hit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=ceLb1Hit ? color.black : f_pct_color(ceLb1Chg), text_size=tableFontSize)
-    table.cell(t3, 2, 3, na(peLb1Chg) ? "No Data" : str.tostring(peLb1Chg, "#.00") + "%", bgcolor=peLb1Hit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=peLb1Hit ? color.black : f_pct_color(peLb1Chg), text_size=tableFontSize)
-
-    // LB2 Val
-    table.cell(t3, 0, 4, lb2Lbl + " Ago (Val)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
-    table.cell(t3, 1, 4, na(ceLb2Val) ? "No Data" : f_fmt_chart(ceLb2Val), bgcolor=ceLb2Hit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=ceLb2Hit ? color.black : f_pct_color(ceLb2Val), text_size=tableFontSize)
-    table.cell(t3, 2, 4, na(peLb2Val) ? "No Data" : f_fmt_chart(peLb2Val), bgcolor=peLb2Hit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=peLb2Hit ? color.black : f_pct_color(peLb2Val), text_size=tableFontSize)
+    table.cell(t3, 0, 2, "Chg " + lb1Lbl + " (Live)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t3, 1, 2, na(ceLb1Chg) ? "No Data" : str.tostring(ceLb1Chg, "#.00") + "%", bgcolor=ceLb1Hit ? (ceLb1Chg >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=ceLb1Hit ? color.white : f_pct_color(ceLb1Chg), text_size=tableFontSize)
+    table.cell(t3, 2, 2, na(peLb1Chg) ? "No Data" : str.tostring(peLb1Chg, "#.00") + "%", bgcolor=peLb1Hit ? (peLb1Chg >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=peLb1Hit ? color.white : f_pct_color(peLb1Chg), text_size=tableFontSize)
 
     // LB2 Chg
-    table.cell(t3, 0, 5, "Chg " + lb2Lbl + " (Live)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
-    table.cell(t3, 1, 5, na(ceLb2Chg) ? "No Data" : str.tostring(ceLb2Chg, "#.00") + "%", bgcolor=ceLb2Hit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=ceLb2Hit ? color.black : f_pct_color(ceLb2Chg), text_size=tableFontSize)
-    table.cell(t3, 2, 5, na(peLb2Chg) ? "No Data" : str.tostring(peLb2Chg, "#.00") + "%", bgcolor=peLb2Hit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=peLb2Hit ? color.black : f_pct_color(peLb2Chg), text_size=tableFontSize)
-
-    // LB3 Val
-    table.cell(t3, 0, 6, lb3Lbl + " Ago (Val)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
-    table.cell(t3, 1, 6, na(ceLb3Val) ? "No Data" : f_fmt_chart(ceLb3Val), bgcolor=ceLb3Hit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=ceLb3Hit ? color.black : f_pct_color(ceLb3Val), text_size=tableFontSize)
-    table.cell(t3, 2, 6, na(peLb3Val) ? "No Data" : f_fmt_chart(peLb3Val), bgcolor=peLb3Hit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=peLb3Hit ? color.black : f_pct_color(peLb3Val), text_size=tableFontSize)
+    table.cell(t3, 0, 3, "Chg " + lb2Lbl + " (Live)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t3, 1, 3, na(ceLb2Chg) ? "No Data" : str.tostring(ceLb2Chg, "#.00") + "%", bgcolor=ceLb2Hit ? (ceLb2Chg >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=ceLb2Hit ? color.white : f_pct_color(ceLb2Chg), text_size=tableFontSize)
+    table.cell(t3, 2, 3, na(peLb2Chg) ? "No Data" : str.tostring(peLb2Chg, "#.00") + "%", bgcolor=peLb2Hit ? (peLb2Chg >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=peLb2Hit ? color.white : f_pct_color(peLb2Chg), text_size=tableFontSize)
 
     // LB3 Chg
-    table.cell(t3, 0, 7, "Chg " + lb3Lbl + " (Live)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
-    table.cell(t3, 1, 7, na(ceLb3Chg) ? "No Data" : str.tostring(ceLb3Chg, "#.00") + "%", bgcolor=ceLb3Hit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=ceLb3Hit ? color.black : f_pct_color(ceLb3Chg), text_size=tableFontSize)
-    table.cell(t3, 2, 7, na(peLb3Chg) ? "No Data" : str.tostring(peLb3Chg, "#.00") + "%", bgcolor=peLb3Hit ? color.new(color.yellow, 0) : color.new(color.maroon, 70), text_color=peLb3Hit ? color.black : f_pct_color(peLb3Chg), text_size=tableFontSize)
+    table.cell(t3, 0, 4, "Chg " + lb3Lbl + " (Live)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t3, 1, 4, na(ceLb3Chg) ? "No Data" : str.tostring(ceLb3Chg, "#.00") + "%", bgcolor=ceLb3Hit ? (ceLb3Chg >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=ceLb3Hit ? color.white : f_pct_color(ceLb3Chg), text_size=tableFontSize)
+    table.cell(t3, 2, 4, na(peLb3Chg) ? "No Data" : str.tostring(peLb3Chg, "#.00") + "%", bgcolor=peLb3Hit ? (peLb3Chg >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=peLb3Hit ? color.white : f_pct_color(peLb3Chg), text_size=tableFontSize)
