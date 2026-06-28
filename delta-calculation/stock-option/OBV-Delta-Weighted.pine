@@ -1,0 +1,473 @@
+//@version=5
+indicator("Stock Option OBV with Delta Weighting", overlay=false, dynamic_requests=true)
+
+// ===== Chart Ticker (auto-detected from chart) =====
+chartSym = syminfo.ticker
+
+// ===== Inputs =====
+frozenTimeInput = input.int(1342, "Frozen Candle Time IST (HHMM)", minval=0, maxval=2359, group="Base Settings", tooltip="Enter as HHMM. e.g. 1342 = 13:42 IST, 915 = 09:15 IST")
+frozenHour   = math.floor(frozenTimeInput / 100)
+frozenMinute = frozenTimeInput - frozenHour * 100
+
+lookbackPctThreshold = input.float(50.0, "Lookback % Threshold", minval=0.0, step=1.0, group="Base Settings")
+frozenPctThreshold   = input.float(50.0, "Frozen Bar % Threshold", minval=0.0, step=1.0, group="Base Settings")
+
+atmStrike          = input.float(24000, "ATM Strike",   step=0.5,      group="Base Settings")
+strikeStep         = input.float(50, "Strike Step",     minval=0.01, step=0.5, group="Base Settings", tooltip="Strike interval for this stock (e.g. 50 for HDFCBANK, 2.5 for USDINR)")
+stepsFromAtm       = input.int(8, "Steps from ATM (each side)", minval=1, maxval=8, group="Base Settings", tooltip="Number of strikes to include on each side of ATM")
+smoothLen          = input.int(9, "OBV EMA Length",     minval=1,      group="Base Settings")
+displayMode        = input.string("Raw", "Display Mode", options=["Raw", "Percent"], group="Base Settings")
+rawChartUnit       = input.string("K", "Raw Chart Unit", options=["K", "M"],         group="Base Settings")
+showTable          = input.bool(true, "Show % Change Table",           group="Base Settings")
+showDayChangeTable = input.bool(true, "Show Day vs Current Table",     group="Base Settings")
+showResetDebug          = input.bool(false, "Show Daily Reset Marker",          group="Base Settings")
+showLbThresholdHighlight = input.bool(false, "Show Lookback Threshold Highlight (Bar BG)", group="Base Settings")
+lbThresholdColor         = input.color(color.orange, "Lookback Threshold BG Color", group="Base Settings")
+showFcThresholdHighlight = input.bool(false, "Show Frozen Threshold Highlight (Bar BG)", group="Base Settings")
+fcThresholdColor         = input.color(color.purple, "Frozen Threshold BG Color", group="Base Settings")
+showThresholdArrows     = input.bool(false, "Show Threshold Arrows",              group="Base Settings")
+lookbackBars            = input.int(10, "Lookback Bars (Table)", minval=1,        group="Base Settings")
+
+// ===== Multi-Lookback Table Inputs =====
+lb1Bars           = input.int(20, "Multi-LB Bar 1", minval=1, maxval=500, group="Multi-Lookback Table")
+lb2Bars           = input.int(25, "Multi-LB Bar 2", minval=1, maxval=500, group="Multi-Lookback Table")
+lb3Bars           = input.int(30, "Multi-LB Bar 3", minval=1, maxval=500, group="Multi-Lookback Table")
+showLookbackTable = input.bool(true, "Show Multi-Lookback Table", group="Multi-Lookback Table")
+
+// ===== Table Font Size =====
+tableFontSizeInput = input.string("Small", "Table Font Size", options=["Tiny", "Small", "Normal", "Large", "Huge"], group="Base Settings")
+tableFontSize = tableFontSizeInput == "Tiny" ? size.tiny : tableFontSizeInput == "Normal" ? size.normal : tableFontSizeInput == "Large" ? size.large : tableFontSizeInput == "Huge" ? size.huge : size.small
+
+
+// ===== Expiry Override Settings =====
+useManualExpiry = input.bool(false, "Use Manual Expiry Code", group="Expiry Override Settings", tooltip="Tick this to force a specific expiry instead of auto-calculated.")
+manualExpiry    = input.string("260626", "Manual Expiry Code (YYMMDD)", group="Expiry Override Settings", tooltip="Example: 260626 = Jun 26, 2026. Only active if 'Use Manual Expiry Code' is checked.")
+
+// ===== Underlying Price (from chart) =====
+underlyingPrice = close
+
+// ===== Date Helpers =====
+f_2d(n) =>
+    int(n) < 10 ? "0" + str.tostring(int(n)) : str.tostring(int(n))
+
+f_expiry_code(yy, mm, dd) =>
+    str.tostring(int(yy)) + f_2d(int(mm)) + f_2d(int(dd))
+
+curYear  = year(timenow)
+curMonth = month(timenow)
+curDay   = dayofmonth(timenow)
+curYY    = int(curYear % 100)
+
+// ===== Monthly Expiry: Last Thursday of each month =====
+// Stocks follow the same monthly expiry schedule as NIFTY (last Thursday)
+f_monthly_expiry_day(mm, yy) =>
+    eDay = 30
+    if yy == 26
+        eDay := mm == 1 ? 29 : mm == 2 ? 26 : mm == 3 ? 26 : mm == 4 ? 30 : mm == 5 ? 28 : mm == 6 ? 25 : mm == 7 ? 30 : mm == 8 ? 27 : mm == 9 ? 24 : mm == 10 ? 29 : mm == 11 ? 26 : 31
+    else if yy == 27
+        eDay := mm == 1 ? 28 : mm == 2 ? 25 : mm == 3 ? 25 : mm == 4 ? 29 : mm == 5 ? 27 : mm == 6 ? 24 : mm == 7 ? 29 : mm == 8 ? 26 : mm == 9 ? 30 : mm == 10 ? 28 : mm == 11 ? 25 : 30
+    eDay
+
+f_monthly_next_expiry() =>
+    mm   = curMonth
+    yy   = curYY
+    eDay = f_monthly_expiry_day(mm, yy)
+    if curDay > eDay
+        mm   := mm == 12 ? 1 : mm + 1
+        yy   := mm == 1 ? yy + 1 : yy
+        eDay := f_monthly_expiry_day(mm, yy)
+    f_expiry_code(yy, mm, eDay)
+
+autoExpiry = f_monthly_next_expiry()
+expiryCode = useManualExpiry ? manualExpiry : autoExpiry
+
+// ===== Symbol Builder: {TICKER}{EXPIRY}C/P{STRIKE} =====
+f_strike_str(_s) =>
+    _s == math.floor(_s) ? str.tostring(int(_s)) : str.tostring(_s, "#.##")
+
+f_sym(_strike, _isCall) =>
+    str.upper(chartSym) + expiryCode + (_isCall ? "C" : "P") + f_strike_str(_strike)
+
+// ===== OBV Calculation =====
+f_bar_obv() =>
+    math.sign(ta.change(close)) * volume
+
+f_obv(_sym) =>
+    raw = request.security(_sym, timeframe.period, ta.cum(nz(f_bar_obv())), lookahead=barmerge.lookahead_off)
+    nz(raw)
+
+currentSpot = underlyingPrice
+
+// ===== Strike Levels =====
+ce_s8 = atmStrike - 8 * strikeStep
+ce_s7 = atmStrike - 7 * strikeStep
+ce_s6 = atmStrike - 6 * strikeStep
+ce_s5 = atmStrike - 5 * strikeStep
+ce_s4 = atmStrike - 4 * strikeStep
+ce_s3 = atmStrike - 3 * strikeStep
+ce_s2 = atmStrike - 2 * strikeStep
+ce_s1 = atmStrike - 1 * strikeStep
+ce_s0 = atmStrike
+ce_p1 = atmStrike + 1 * strikeStep
+ce_p2 = atmStrike + 2 * strikeStep
+ce_p3 = atmStrike + 3 * strikeStep
+ce_p4 = atmStrike + 4 * strikeStep
+ce_p5 = atmStrike + 5 * strikeStep
+ce_p6 = atmStrike + 6 * strikeStep
+ce_p7 = atmStrike + 7 * strikeStep
+ce_p8 = atmStrike + 8 * strikeStep
+
+pe_s8 = atmStrike - 8 * strikeStep
+pe_s7 = atmStrike - 7 * strikeStep
+pe_s6 = atmStrike - 6 * strikeStep
+pe_s5 = atmStrike - 5 * strikeStep
+pe_s4 = atmStrike - 4 * strikeStep
+pe_s3 = atmStrike - 3 * strikeStep
+pe_s2 = atmStrike - 2 * strikeStep
+pe_s1 = atmStrike - 1 * strikeStep
+pe_s0 = atmStrike
+pe_p1 = atmStrike + 1 * strikeStep
+pe_p2 = atmStrike + 2 * strikeStep
+pe_p3 = atmStrike + 3 * strikeStep
+pe_p4 = atmStrike + 4 * strikeStep
+pe_p5 = atmStrike + 5 * strikeStep
+pe_p6 = atmStrike + 6 * strikeStep
+pe_p7 = atmStrike + 7 * strikeStep
+pe_p8 = atmStrike + 8 * strikeStep
+
+// ===== OBV Aggregation (filtered by stepsFromAtm) =====
+ceRawObv = 0.0
+ceRawObv += f_obv(f_sym(ce_s0, true))
+ceRawObv += stepsFromAtm >= 1 ? f_obv(f_sym(ce_s1, true)) : 0.0
+ceRawObv += stepsFromAtm >= 2 ? f_obv(f_sym(ce_s2, true)) : 0.0
+ceRawObv += stepsFromAtm >= 3 ? f_obv(f_sym(ce_s3, true)) : 0.0
+ceRawObv += stepsFromAtm >= 4 ? f_obv(f_sym(ce_s4, true)) : 0.0
+ceRawObv += stepsFromAtm >= 5 ? f_obv(f_sym(ce_s5, true)) : 0.0
+ceRawObv += stepsFromAtm >= 6 ? f_obv(f_sym(ce_s6, true)) : 0.0
+ceRawObv += stepsFromAtm >= 7 ? f_obv(f_sym(ce_s7, true)) : 0.0
+ceRawObv += stepsFromAtm >= 8 ? f_obv(f_sym(ce_s8, true)) : 0.0
+ceRawObv += stepsFromAtm >= 1 ? f_obv(f_sym(ce_p1, true)) : 0.0
+ceRawObv += stepsFromAtm >= 2 ? f_obv(f_sym(ce_p2, true)) : 0.0
+ceRawObv += stepsFromAtm >= 3 ? f_obv(f_sym(ce_p3, true)) : 0.0
+ceRawObv += stepsFromAtm >= 4 ? f_obv(f_sym(ce_p4, true)) : 0.0
+ceRawObv += stepsFromAtm >= 5 ? f_obv(f_sym(ce_p5, true)) : 0.0
+ceRawObv += stepsFromAtm >= 6 ? f_obv(f_sym(ce_p6, true)) : 0.0
+ceRawObv += stepsFromAtm >= 7 ? f_obv(f_sym(ce_p7, true)) : 0.0
+ceRawObv += stepsFromAtm >= 8 ? f_obv(f_sym(ce_p8, true)) : 0.0
+
+peRawObv = 0.0
+peRawObv += f_obv(f_sym(pe_s0, false))
+peRawObv += stepsFromAtm >= 1 ? f_obv(f_sym(pe_s1, false)) : 0.0
+peRawObv += stepsFromAtm >= 2 ? f_obv(f_sym(pe_s2, false)) : 0.0
+peRawObv += stepsFromAtm >= 3 ? f_obv(f_sym(pe_s3, false)) : 0.0
+peRawObv += stepsFromAtm >= 4 ? f_obv(f_sym(pe_s4, false)) : 0.0
+peRawObv += stepsFromAtm >= 5 ? f_obv(f_sym(pe_s5, false)) : 0.0
+peRawObv += stepsFromAtm >= 6 ? f_obv(f_sym(pe_s6, false)) : 0.0
+peRawObv += stepsFromAtm >= 7 ? f_obv(f_sym(pe_s7, false)) : 0.0
+peRawObv += stepsFromAtm >= 8 ? f_obv(f_sym(pe_s8, false)) : 0.0
+peRawObv += stepsFromAtm >= 1 ? f_obv(f_sym(pe_p1, false)) : 0.0
+peRawObv += stepsFromAtm >= 2 ? f_obv(f_sym(pe_p2, false)) : 0.0
+peRawObv += stepsFromAtm >= 3 ? f_obv(f_sym(pe_p3, false)) : 0.0
+peRawObv += stepsFromAtm >= 4 ? f_obv(f_sym(pe_p4, false)) : 0.0
+peRawObv += stepsFromAtm >= 5 ? f_obv(f_sym(pe_p5, false)) : 0.0
+peRawObv += stepsFromAtm >= 6 ? f_obv(f_sym(pe_p6, false)) : 0.0
+peRawObv += stepsFromAtm >= 7 ? f_obv(f_sym(pe_p7, false)) : 0.0
+peRawObv += stepsFromAtm >= 8 ? f_obv(f_sym(pe_p8, false)) : 0.0
+
+// ===== Day Opening Candle Baseline =====
+isNewDay = ta.change(time("D")) != 0
+
+var float ceBase          = na
+var float peBase          = na
+var float ceSecondBase    = na
+var float peSecondBase    = na
+var int   dayCandleNo     = 0
+var float cePrevDayClose  = na
+var float pePrevDayClose  = na
+var float ceFrozenVal     = na
+var float peFrozenVal     = na
+var bool  resetNow        = false
+
+resetNow := false
+
+if isNewDay
+    ceBase       := na
+    peBase       := na
+    ceSecondBase := na
+    peSecondBase := na
+    ceFrozenVal  := na
+    peFrozenVal  := na
+    dayCandleNo  := 0
+    resetNow     := true
+
+if barstate.isconfirmed
+    dayCandleNo += 1
+    if dayCandleNo == 1
+        ceBase := ceRawObv
+        peBase := peRawObv
+    if dayCandleNo == 2
+        ceSecondBase := ceRawObv
+        peSecondBase := peRawObv
+
+// ===== Frozen Candle: IST Time-based Detection =====
+barOpenMs   = hour(time, "Asia/Kolkata") * 3600000 + minute(time, "Asia/Kolkata") * 60000
+targetMs    = frozenHour * 3600000 + frozenMinute * 60000
+tfMs        = timeframe.in_seconds() * 1000
+isFrozenTime = barOpenMs <= targetMs and targetMs < barOpenMs + tfMs
+
+plotshape(showResetDebug and resetNow, title="Daily Baseline Reset", style=shape.labeldown, location=location.top, color=color.yellow, textcolor=color.black, text="RESET", size=size.tiny)
+plotshape(barstate.isconfirmed and isFrozenTime, title="Frozen Candle Marker", style=shape.labeldown, location=location.top, color=color.teal, textcolor=color.white, text="FC", size=size.normal)
+
+// ===== Delta from Baselines =====
+ceDayRaw     = ceRawObv - nz(ceBase, ceRawObv)
+peDayRaw     = peRawObv - nz(peBase, peRawObv)
+ceFrom1stRaw = ceDayRaw
+peFrom1stRaw = peDayRaw
+ceFrom2ndRaw = not na(ceSecondBase) ? ceRawObv - ceSecondBase : na
+peFrom2ndRaw = not na(peSecondBase) ? peRawObv - peSecondBase : na
+
+ceFrom1stPct = math.abs(nz(ceBase)) > 0 ? (ceFrom1stRaw / math.abs(ceBase)) * 100 : 0.0
+peFrom1stPct = math.abs(nz(peBase)) > 0 ? (peFrom1stRaw / math.abs(peBase)) * 100 : 0.0
+ceFrom2ndPct = not na(ceSecondBase) and math.abs(ceSecondBase) > 0 ? (ceFrom2ndRaw / math.abs(ceSecondBase)) * 100 : na
+peFrom2ndPct = not na(peSecondBase) and math.abs(peSecondBase) > 0 ? (peFrom2ndRaw / math.abs(peSecondBase)) * 100 : na
+
+ceRawEma = ta.ema(ceFrom1stRaw, smoothLen)
+peRawEma = ta.ema(peFrom1stRaw, smoothLen)
+cePctEma = ta.ema(ceFrom1stPct, smoothLen)
+pePctEma = ta.ema(peFrom1stPct, smoothLen)
+
+useRaw   = displayMode == "Raw"
+ceActive = useRaw ? ceRawEma : cePctEma
+peActive = useRaw ? peRawEma : pePctEma
+
+// ===== Frozen Candle Capture =====
+if barstate.isconfirmed and isFrozenTime
+    ceFrozenVal := ceActive
+    peFrozenVal := peActive
+
+if isNewDay
+    cePrevDayClose := ceActive[1]
+    pePrevDayClose := peActive[1]
+
+rawDiv     = rawChartUnit == "M" ? 1000000.0 : 1000.0
+ceRawChart = ceRawEma / rawDiv
+peRawChart = peRawEma / rawDiv
+
+crossUp   = ta.crossover(ceActive, peActive)
+crossDown = ta.crossunder(ceActive, peActive)
+
+// ===== Lookback Bars Computation =====
+ceLookbackVal       = ceActive[lookbackBars]
+peLookbackVal       = peActive[lookbackBars]
+ceLookbackChangePct = not na(ceLookbackVal) and math.abs(ceLookbackVal) > 0 ? ((ceActive - ceLookbackVal) / math.abs(ceLookbackVal)) * 100 : na
+peLookbackChangePct = not na(peLookbackVal) and math.abs(peLookbackVal) > 0 ? ((peActive - peLookbackVal) / math.abs(peLookbackVal)) * 100 : na
+
+// ===== Frozen Candle Change Computation =====
+ceFrozenChangePct = not na(ceFrozenVal) and math.abs(ceFrozenVal) > 0 ? ((ceActive - ceFrozenVal) / math.abs(ceFrozenVal)) * 100 : na
+peFrozenChangePct = not na(peFrozenVal) and math.abs(peFrozenVal) > 0 ? ((peActive - peFrozenVal) / math.abs(peFrozenVal)) * 100 : na
+
+// ===== Percentage Threshold Detection =====
+ceLbHit = not na(ceLookbackChangePct) and math.abs(ceLookbackChangePct) >= lookbackPctThreshold
+peLbHit = not na(peLookbackChangePct) and math.abs(peLookbackChangePct) >= lookbackPctThreshold
+ceFcHit = not na(ceFrozenChangePct) and math.abs(ceFrozenChangePct) >= frozenPctThreshold
+peFcHit = not na(peFrozenChangePct) and math.abs(peFrozenChangePct) >= frozenPctThreshold
+anyThresholdHit = ceLbHit or peLbHit or ceFcHit or peFcHit
+
+bgcolor(showLbThresholdHighlight and (ceLbHit or peLbHit) ? color.new(lbThresholdColor, 70) : na, title="Lookback Threshold Highlight")
+bgcolor(showFcThresholdHighlight and (ceFcHit or peFcHit) ? color.new(fcThresholdColor, 70) : na, title="Frozen Threshold Highlight")
+
+lbThLabel = str.tostring(lookbackPctThreshold, "#.0") + "%"
+fcThLabel = str.tostring(frozenPctThreshold, "#.0") + "%"
+fcTimeTxt = str.tostring(frozenHour) + ":" + f_2d(frozenMinute) + " IST"
+
+plotshape(showThresholdArrows and (ceLbHit or ceFcHit), title="CE Threshold Hit", style=shape.triangleup,   location=location.top,    color=color.yellow, size=size.tiny)
+plotshape(showThresholdArrows and (peLbHit or peFcHit), title="PE Threshold Hit", style=shape.triangledown, location=location.bottom, color=color.yellow, size=size.tiny)
+
+// ===== Alerts =====
+f_json(txt) =>
+    str.replace_all(str.replace_all(txt, "\n", "\\n"), '"', '\\"')
+
+f_webhook_payload(_html_text) =>
+    '{"chat_id":"-1003533948678","parse_mode":"HTML","text":"' + f_json(_html_text) + '"}'
+
+lbHitAny = ceLbHit or peLbHit
+fcHitAny = ceFcHit or peFcHit
+
+if barstate.isconfirmed and lbHitAny and not lbHitAny[1]
+    msg_html = "<b>OBV LOOKBACK THRESHOLD ALERT</b>\n<b>" + chartSym + "</b> | TF:" + timeframe.period + "\n<b>Event:</b> Lookback % change (>= " + lbThLabel + ") over last " + str.tostring(lookbackBars) + " bars\n<b>CE:</b> " + str.tostring(ceLookbackChangePct, "#.00") + "% | <b>PE:</b> " + str.tostring(peLookbackChangePct, "#.00") + "%"
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and fcHitAny and not fcHitAny[1]
+    msg_html = "<b>OBV FROZEN BAR THRESHOLD ALERT</b>\n<b>" + chartSym + "</b> | TF:" + timeframe.period + "\n<b>Event:</b> Frozen Bar % change (>= " + fcThLabel + ") vs " + fcTimeTxt + "\n<b>CE:</b> " + str.tostring(ceFrozenChangePct, "#.00") + "% | <b>PE:</b> " + str.tostring(peFrozenChangePct, "#.00") + "%"
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and crossUp
+    modeTxt  = useRaw ? "Raw" : "Percent"
+    msg_html = "<b>OBV CE/PE CROSS ALERT</b>\n<b>" + chartSym + "</b> | TF:" + timeframe.period + "\n<b>Mode:</b> " + modeTxt + "\n<b>Event:</b> Green crossed Red (BULL)\n<b>CE:</b> " + str.tostring(ceActive, "#.00") + " | <b>PE:</b> " + str.tostring(peActive, "#.00")
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and crossDown
+    modeTxt  = useRaw ? "Raw" : "Percent"
+    msg_html = "<b>OBV CE/PE CROSS ALERT</b>\n<b>" + chartSym + "</b> | TF:" + timeframe.period + "\n<b>Mode:</b> " + modeTxt + "\n<b>Event:</b> Red crossed Green (BEAR)\n<b>CE:</b> " + str.tostring(ceActive, "#.00") + " | <b>PE:</b> " + str.tostring(peActive, "#.00")
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and ceLbHit and not ceLbHit[1]
+    msg_html = "<b>OBV THRESHOLD ALERT (CE)</b>\n<b>" + chartSym + "</b> | TF:" + timeframe.period + "\n<b>Event:</b> CE changed " + str.tostring(ceLookbackChangePct, "#.00") + "% over last " + str.tostring(lookbackBars) + " bars (>= " + lbThLabel + ")\n<b>CE:</b> " + str.tostring(ceActive, "#.00")
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and peLbHit and not peLbHit[1]
+    msg_html = "<b>OBV THRESHOLD ALERT (PE)</b>\n<b>" + chartSym + "</b> | TF:" + timeframe.period + "\n<b>Event:</b> PE changed " + str.tostring(peLookbackChangePct, "#.00") + "% over last " + str.tostring(lookbackBars) + " bars (>= " + lbThLabel + ")\n<b>PE:</b> " + str.tostring(peActive, "#.00")
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and ceFcHit and not ceFcHit[1]
+    msg_html = "<b>OBV FROZEN BAR THRESHOLD ALERT (CE)</b>\n<b>" + chartSym + "</b> | TF:" + timeframe.period + "\n<b>Event:</b> CE changed " + str.tostring(ceFrozenChangePct, "#.00") + "% vs Frozen Bar (" + fcTimeTxt + ") (>= " + fcThLabel + ")\n<b>CE:</b> " + str.tostring(ceActive, "#.00")
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and peFcHit and not peFcHit[1]
+    msg_html = "<b>OBV FROZEN BAR THRESHOLD ALERT (PE)</b>\n<b>" + chartSym + "</b> | TF:" + timeframe.period + "\n<b>Event:</b> PE changed " + str.tostring(peFrozenChangePct, "#.00") + "% vs Frozen Bar (" + fcTimeTxt + ") (>= " + fcThLabel + ")\n<b>PE:</b> " + str.tostring(peActive, "#.00")
+    alert(f_webhook_payload(msg_html), alert.freq_once_per_bar_close)
+
+// ===== Plot =====
+plot(0, "Opening Candle Baseline", color=color.new(color.gray, 20), linewidth=1, style=plot.style_line)
+plot(useRaw ? ceRawChart : na, "CE OBV Raw", color=color.new(color.lime, 0), linewidth=2)
+plot(useRaw ? peRawChart : na, "PE OBV Raw", color=color.new(color.red,  0), linewidth=2)
+
+// ===== Table =====
+f_pct_color(v) =>
+    na(v) ? color.new(color.gray, 0) : v > 0 ? color.new(color.lime, 0) : v < 0 ? color.new(color.red, 0) : color.new(color.gray, 0)
+
+f_fmt_km(v) =>
+    av = math.abs(v)
+    av >= 1000000 ? str.tostring(v / 1000000, "#.00") + "M" : av >= 1000 ? str.tostring(v / 1000, "#.00") + "K" : str.tostring(v, "#.0")
+
+var table t = table.new(position.top_right, 3, 10, border_width=1)
+
+if barstate.islast and showTable
+    table.cell(t, 0, 0, "Metric",              bgcolor=color.new(color.silver, 15), text_color=color.black, text_size=tableFontSize)
+    table.cell(t, 1, 0, "CE",                  bgcolor=color.new(color.silver, 15), text_color=color.black, text_size=tableFontSize)
+    table.cell(t, 2, 0, "PE",                  bgcolor=color.new(color.silver, 15), text_color=color.black, text_size=tableFontSize)
+
+    table.cell(t, 0, 1, chartSym + " Price",   bgcolor=color.new(color.navy, 60), text_color=color.white,  text_size=tableFontSize)
+    table.cell(t, 1, 1, str.tostring(underlyingPrice, "#.00"), bgcolor=color.new(color.navy, 70), text_color=color.yellow, text_size=tableFontSize)
+    table.cell(t, 2, 1, "Steps: ±" + str.tostring(stepsFromAtm), bgcolor=color.new(color.navy, 70), text_color=color.silver, text_size=tableFontSize)
+
+    table.cell(t, 0, 2, "ATM | Expiry",        bgcolor=color.new(color.navy, 60), text_color=color.white,  text_size=tableFontSize)
+    table.cell(t, 1, 2, f_strike_str(atmStrike), bgcolor=color.new(color.navy, 70), text_color=color.yellow, text_size=tableFontSize)
+    table.cell(t, 2, 2, expiryCode,            bgcolor=color.new(color.navy, 70), text_color=color.yellow, text_size=tableFontSize)
+
+    table.cell(t, 0, 3, "1st Candle Raw",      bgcolor=color.new(color.gray, 85), text_color=color.white,  text_size=tableFontSize)
+    table.cell(t, 1, 4, f_fmt_km(ceBase),      bgcolor=color.new(color.gray, 90), text_color=color.white,  text_size=tableFontSize)
+    table.cell(t, 2, 4, f_fmt_km(peBase),      bgcolor=color.new(color.gray, 90), text_color=color.white,  text_size=tableFontSize)
+
+    table.cell(t, 0, 5, "2nd Candle Raw",      bgcolor=color.new(color.gray, 85), text_color=color.white,  text_size=tableFontSize)
+    table.cell(t, 1, 5, na(ceSecondBase) ? "Waiting" : f_fmt_km(ceSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(ceSecondBase) ? color.orange : color.white, text_size=tableFontSize)
+    table.cell(t, 2, 5, na(peSecondBase) ? "Waiting" : f_fmt_km(peSecondBase), bgcolor=color.new(color.gray, 90), text_color=na(peSecondBase) ? color.orange : color.white, text_size=tableFontSize)
+
+    table.cell(t, 0, 6, "Current Raw",         bgcolor=color.new(color.gray, 85), text_color=color.white,  text_size=tableFontSize)
+    table.cell(t, 1, 6, f_fmt_km(ceRawObv),    bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceDayRaw), text_size=tableFontSize)
+    table.cell(t, 2, 6, f_fmt_km(peRawObv),    bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peDayRaw), text_size=tableFontSize)
+
+    table.cell(t, 0, 7, "% from 1st Candle",   bgcolor=color.new(color.gray, 85), text_color=color.white,  text_size=tableFontSize)
+    table.cell(t, 1, 7, str.tostring(ceFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom1stPct), text_size=tableFontSize)
+    table.cell(t, 2, 7, str.tostring(peFrom1stPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom1stPct), text_size=tableFontSize)
+
+    table.cell(t, 0, 8, "% from 2nd Candle",   bgcolor=color.new(color.gray, 85), text_color=color.white,  text_size=tableFontSize)
+    table.cell(t, 1, 8, na(ceFrom2ndPct) ? "-" : str.tostring(ceFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(ceFrom2ndPct), text_size=tableFontSize)
+    table.cell(t, 2, 8, na(peFrom2ndPct) ? "-" : str.tostring(peFrom2ndPct, "#.00") + "%", bgcolor=color.new(color.gray, 90), text_color=f_pct_color(peFrom2ndPct), text_size=tableFontSize)
+
+// ===== Day vs Current Table =====
+unitLabel = rawChartUnit
+modeLabel = useRaw ? unitLabel : "%"
+
+f_fmt_chart(v) =>
+    useRaw ? (str.tostring(v / rawDiv, "#.00") + unitLabel) : (str.tostring(v, "#.00") + "%")
+
+ceDayChangePct = not na(cePrevDayClose) and math.abs(cePrevDayClose) > 0 ? ((ceActive - cePrevDayClose) / math.abs(cePrevDayClose)) * 100 : na
+peDayChangePct = not na(pePrevDayClose) and math.abs(pePrevDayClose) > 0 ? ((peActive - pePrevDayClose) / math.abs(pePrevDayClose)) * 100 : na
+
+var table t2 = table.new(position.bottom_right, 3, 8, border_color=color.new(color.navy, 0), border_width=2, frame_color=color.new(color.navy, 0), frame_width=2)
+
+if barstate.islast and showDayChangeTable
+    lbLabel = "±" + str.tostring(lookbackBars) + "B"
+    fcLabel = "FC " + str.tostring(frozenHour) + ":" + f_2d(frozenMinute) + "IST"
+
+    table.cell(t2, 0, 0, "OBV: Day vs Current (" + modeLabel + ")", bgcolor=color.new(color.navy, 10), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 0, "CE",                                       bgcolor=color.new(color.navy, 10), text_color=color.lime,  text_size=tableFontSize)
+    table.cell(t2, 2, 0, "PE",                                       bgcolor=color.new(color.navy, 10), text_color=color.red,   text_size=tableFontSize)
+
+    table.cell(t2, 0, 1, "Prev Day Close", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 1, na(cePrevDayClose) ? "No Data" : f_fmt_chart(cePrevDayClose), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(cePrevDayClose), text_size=tableFontSize)
+    table.cell(t2, 2, 1, na(pePrevDayClose) ? "No Data" : f_fmt_chart(pePrevDayClose), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(pePrevDayClose), text_size=tableFontSize)
+
+    table.cell(t2, 0, 2, "Today (Live)", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 2, f_fmt_chart(ceActive), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(ceActive), text_size=tableFontSize)
+    table.cell(t2, 2, 2, f_fmt_chart(peActive), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(peActive), text_size=tableFontSize)
+
+    table.cell(t2, 0, 3, "% Change (Day)", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 3, na(ceDayChangePct) ? "No Data" : str.tostring(ceDayChangePct, "#.00") + "%", bgcolor=color.new(color.gray, 85), text_color=f_pct_color(ceDayChangePct), text_size=tableFontSize)
+    table.cell(t2, 2, 3, na(peDayChangePct) ? "No Data" : str.tostring(peDayChangePct, "#.00") + "%", bgcolor=color.new(color.gray, 85), text_color=f_pct_color(peDayChangePct), text_size=tableFontSize)
+
+    table.cell(t2, 0, 4, lbLabel + " Ago (Val)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 4, na(ceLookbackVal) ? "No Data" : f_fmt_chart(ceLookbackVal), bgcolor=ceLbHit ? (ceLookbackChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 2, 4, na(peLookbackVal) ? "No Data" : f_fmt_chart(peLookbackVal), bgcolor=peLbHit ? (peLookbackChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=color.white, text_size=tableFontSize)
+
+    table.cell(t2, 0, 5, "Chg " + lbLabel + " (Live)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 5, na(ceLookbackChangePct) ? "No Data" : str.tostring(ceLookbackChangePct, "#.00") + "%", bgcolor=ceLbHit ? (ceLookbackChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=ceLbHit ? color.white : f_pct_color(ceLookbackChangePct), text_size=tableFontSize)
+    table.cell(t2, 2, 5, na(peLookbackChangePct) ? "No Data" : str.tostring(peLookbackChangePct, "#.00") + "%", bgcolor=peLbHit ? (peLookbackChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=peLbHit ? color.white : f_pct_color(peLookbackChangePct), text_size=tableFontSize)
+
+    table.cell(t2, 0, 6, fcLabel + " Val", bgcolor=color.new(color.teal, 50), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 6, na(ceFrozenVal) ? "Waiting" : f_fmt_chart(ceFrozenVal), bgcolor=ceFcHit ? (ceFrozenChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.teal, 60), text_color=ceFcHit ? color.white : na(ceFrozenVal) ? color.orange : f_pct_color(ceFrozenVal), text_size=tableFontSize)
+    table.cell(t2, 2, 6, na(peFrozenVal) ? "Waiting" : f_fmt_chart(peFrozenVal), bgcolor=peFcHit ? (peFrozenChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.teal, 60), text_color=peFcHit ? color.white : na(peFrozenVal) ? color.orange : f_pct_color(peFrozenVal), text_size=tableFontSize)
+
+    table.cell(t2, 0, 7, "Chg " + fcLabel, bgcolor=color.new(color.teal, 50), text_color=color.white, text_size=tableFontSize)
+    table.cell(t2, 1, 7, na(ceFrozenChangePct) ? "Waiting" : str.tostring(ceFrozenChangePct, "#.00") + "%", bgcolor=ceFcHit ? (ceFrozenChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.teal, 60), text_color=ceFcHit ? color.white : na(ceFrozenChangePct) ? color.orange : f_pct_color(ceFrozenChangePct), text_size=tableFontSize)
+    table.cell(t2, 2, 7, na(peFrozenChangePct) ? "Waiting" : str.tostring(peFrozenChangePct, "#.00") + "%", bgcolor=peFcHit ? (peFrozenChangePct >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.teal, 60), text_color=peFcHit ? color.white : na(peFrozenChangePct) ? color.orange : f_pct_color(peFrozenChangePct), text_size=tableFontSize)
+
+// ===== Multi-Lookback Horizontal Table =====
+ceLb1Val = ceActive[lb1Bars]
+peLb1Val = peActive[lb1Bars]
+ceLb2Val = ceActive[lb2Bars]
+peLb2Val = peActive[lb2Bars]
+ceLb3Val = ceActive[lb3Bars]
+peLb3Val = peActive[lb3Bars]
+
+ceLb1Chg = not na(ceLb1Val) and math.abs(ceLb1Val) > 0 ? ((ceActive - ceLb1Val) / math.abs(ceLb1Val)) * 100 : na
+peLb1Chg = not na(peLb1Val) and math.abs(peLb1Val) > 0 ? ((peActive - peLb1Val) / math.abs(peLb1Val)) * 100 : na
+ceLb2Chg = not na(ceLb2Val) and math.abs(ceLb2Val) > 0 ? ((ceActive - ceLb2Val) / math.abs(ceLb2Val)) * 100 : na
+peLb2Chg = not na(peLb2Val) and math.abs(peLb2Val) > 0 ? ((peActive - peLb2Val) / math.abs(peLb2Val)) * 100 : na
+ceLb3Chg = not na(ceLb3Val) and math.abs(ceLb3Val) > 0 ? ((ceActive - ceLb3Val) / math.abs(ceLb3Val)) * 100 : na
+peLb3Chg = not na(peLb3Val) and math.abs(peLb3Val) > 0 ? ((peActive - peLb3Val) / math.abs(peLb3Val)) * 100 : na
+
+ceLb1Hit = not na(ceLb1Chg) and math.abs(ceLb1Chg) >= lookbackPctThreshold
+peLb1Hit = not na(peLb1Chg) and math.abs(peLb1Chg) >= lookbackPctThreshold
+ceLb2Hit = not na(ceLb2Chg) and math.abs(ceLb2Chg) >= lookbackPctThreshold
+peLb2Hit = not na(peLb2Chg) and math.abs(peLb2Chg) >= lookbackPctThreshold
+ceLb3Hit = not na(ceLb3Chg) and math.abs(ceLb3Chg) >= lookbackPctThreshold
+peLb3Hit = not na(peLb3Chg) and math.abs(peLb3Chg) >= lookbackPctThreshold
+
+var table t3 = table.new(position.bottom_left, 3, 5, border_width=1)
+
+if barstate.islast and showLookbackTable
+    lb1Lbl = "±" + str.tostring(lb1Bars) + "B"
+    lb2Lbl = "±" + str.tostring(lb2Bars) + "B"
+    lb3Lbl = "±" + str.tostring(lb3Bars) + "B"
+
+    table.cell(t3, 0, 0, "OBV Multi-Lookback (" + modeLabel + ")", bgcolor=color.new(color.navy, 10), text_color=color.white, text_size=tableFontSize)
+    table.cell(t3, 1, 0, "CE",                                      bgcolor=color.new(color.navy, 10), text_color=color.lime,  text_size=tableFontSize)
+    table.cell(t3, 2, 0, "PE",                                      bgcolor=color.new(color.navy, 10), text_color=color.red,   text_size=tableFontSize)
+
+    table.cell(t3, 0, 1, "Today (Live)",        bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=tableFontSize)
+    table.cell(t3, 1, 1, f_fmt_chart(ceActive), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(ceActive), text_size=tableFontSize)
+    table.cell(t3, 2, 1, f_fmt_chart(peActive), bgcolor=color.new(color.gray, 85), text_color=f_pct_color(peActive), text_size=tableFontSize)
+
+    table.cell(t3, 0, 2, "Chg " + lb1Lbl + " (Live)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t3, 1, 2, na(ceLb1Chg) ? "No Data" : str.tostring(ceLb1Chg, "#.00") + "%", bgcolor=ceLb1Hit ? (ceLb1Chg >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=ceLb1Hit ? color.white : f_pct_color(ceLb1Chg), text_size=tableFontSize)
+    table.cell(t3, 2, 2, na(peLb1Chg) ? "No Data" : str.tostring(peLb1Chg, "#.00") + "%", bgcolor=peLb1Hit ? (peLb1Chg >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=peLb1Hit ? color.white : f_pct_color(peLb1Chg), text_size=tableFontSize)
+
+    table.cell(t3, 0, 3, "Chg " + lb2Lbl + " (Live)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t3, 1, 3, na(ceLb2Chg) ? "No Data" : str.tostring(ceLb2Chg, "#.00") + "%", bgcolor=ceLb2Hit ? (ceLb2Chg >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=ceLb2Hit ? color.white : f_pct_color(ceLb2Chg), text_size=tableFontSize)
+    table.cell(t3, 2, 3, na(peLb2Chg) ? "No Data" : str.tostring(peLb2Chg, "#.00") + "%", bgcolor=peLb2Hit ? (peLb2Chg >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=peLb2Hit ? color.white : f_pct_color(peLb2Chg), text_size=tableFontSize)
+
+    table.cell(t3, 0, 4, "Chg " + lb3Lbl + " (Live)", bgcolor=color.new(color.maroon, 60), text_color=color.white, text_size=tableFontSize)
+    table.cell(t3, 1, 4, na(ceLb3Chg) ? "No Data" : str.tostring(ceLb3Chg, "#.00") + "%", bgcolor=ceLb3Hit ? (ceLb3Chg >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=ceLb3Hit ? color.white : f_pct_color(ceLb3Chg), text_size=tableFontSize)
+    table.cell(t3, 2, 4, na(peLb3Chg) ? "No Data" : str.tostring(peLb3Chg, "#.00") + "%", bgcolor=peLb3Hit ? (peLb3Chg >= 0 ? color.new(color.green, 20) : color.new(color.red, 20)) : color.new(color.maroon, 70), text_color=peLb3Hit ? color.white : f_pct_color(peLb3Chg), text_size=tableFontSize)
